@@ -13,24 +13,26 @@ All scheduling decisions—wakeup token inheritance, utilization estimation, cor
 `scx_fcp` partitions tasks into three scheduling tiers—**Tier 0 (`FCP_TIER_CRITICAL`)**, **Tier 1 (`FCP_TIER_INTERACTIVE`)**, and **Tier 2 (`FCP_TIER_BACKGROUND`)**—mapped to three dedicated in-kernel dispatch queues (`FCP_DSQ_CRITICAL`, `FCP_DSQ_INTERACTIVE`, and `FCP_DSQ_BACKGROUND`) alongside per-CPU `SCX_DSQ_LOCAL` queues.
 
 ```mermaid
-graph TD;
-    Wakeup[Wakeup / Enqueue]-->Token[FCP-Token Inheritance & DT-BWU];
-    Token-->Tier0[(FCP_DSQ_CRITICAL)];
-    Token-->Tier1[(FCP_DSQ_INTERACTIVE)];
-    Token-->Tier2[(FCP_DSQ_BACKGROUND)];
+%%{init: {"layout": "dagre", "flowchart": {"htmlLabels": false, "curve": "linear", "nodeSpacing": 20, "rankSpacing": 35}}}%%
+flowchart TD
+    Wakeup["Wakeup / Enqueue"] --> Token["FCP-Token<br/>Inheritance and DT-BWU"]
 
-    Tier0-->|Direct Local / Preempt|Big0[big / Prime CPU N];
-    Tier0-->|Direct Local / Preempt|Big1[big / Prime CPU N+1];
-    Tier0-.->|Thermal Spill / Rescue|Lit0[LITTLE CPU 0];
+    Token --> Tier0[("FCP_DSQ<br/>CRITICAL")]
+    Token --> Tier1[("FCP_DSQ<br/>INTERACTIVE")]
+    Token --> Tier2[("FCP_DSQ<br/>BACKGROUND")]
 
-    Tier1-->Big0;
-    Tier1-->Big1;
-    Tier1-->Lit0;
-    Tier1-->Lit1[LITTLE CPU 1];
+    Tier0 -->|Direct Local<br/>/ Preempt| Big0["big / Prime<br/>CPU N"]
+    Tier0 -->|Direct Local<br/>/ Preempt| Big1["big / Prime<br/>CPU N+1"]
+    Tier0 -.->|Thermal Spill<br/>/ Rescue| Lit0["LITTLE<br/>CPU 0"]
 
-    Tier2-->Lit0;
-    Tier2-->Lit1;
-    Tier2-.->|Work Conserving Idle|Big0;
+    Tier1 --> Big0
+    Tier1 --> Big1
+    Tier1 --> Lit0
+    Tier1 --> Lit1["LITTLE<br/>CPU 1"]
+
+    Tier2 --> Lit0
+    Tier2 --> Lit1
+    Tier2 -.->|Work Conserving<br/>Idle| Big0
 ```
 
 `scx_fcp` operates through three coupled mechanisms in BPF:
