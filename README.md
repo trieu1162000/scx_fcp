@@ -105,6 +105,19 @@ flowchart TD
 - **`CONFIG_FUNCTION_TRACER` is optional**:
   - Unlike schedulers that require tracefs `available_filter_functions`, `scx_fcp` runs entirely via `bpf_struct_ops` (`sched_ext_ops`) and works on production Android GKI kernels where `CONFIG_FUNCTION_TRACER` is disabled.
 
+### Setup, Build & Run
+
+```bash
+# Build scx_fcp and the 4-stage frame pipeline benchmark
+cargo build --release -p scx_fcp
+
+# Run scx_fcp (60 Hz = 16667 us frame budget, 2 s telemetry interval)
+sudo ./target/release/scx_fcp -f 16667 -c 2000 -i 3000 -b 6000 -t 850 -s 2a
+```
+
+For complete setup, cross-compilation (`x86_64` & `aarch64`), Android bundle packaging, and evaluation instructions, see:
+- **[`SETUP.md`](SETUP.md)** — End-to-end build, kernel configuration, Android bundle packaging, and benchmark setup
+
 ---
 
 ## Things you probably shouldn't use `scx_fcp` for
