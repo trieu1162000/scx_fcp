@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 
 fn main() {
-    if std::env::var_os("BPF_EXTRA_CFLAGS_POST_INCL").is_none() {
-        unsafe {
-            std::env::set_var("BPF_EXTRA_CFLAGS_POST_INCL", "-mcpu=v3");
-        }
+    let mut bpf_cflags =
+        std::env::var("BPF_EXTRA_CFLAGS_POST_INCL").unwrap_or_else(|_| "-mcpu=v3".to_owned());
+    if std::env::var_os("SCX_FCP_ANDROID_61").is_some() {
+        bpf_cflags.push_str(" -DSCX_FCP_ANDROID_61");
+    }
+    unsafe {
+        std::env::set_var("BPF_EXTRA_CFLAGS_POST_INCL", bpf_cflags);
     }
     scx_cargo::BpfBuilder::new()
         .unwrap()

@@ -125,7 +125,13 @@ adb -s 127.0.0.1:6520 shell 'su 0 sh -c "
 "'
 ```
 
-### 4.3. On Physical ARM64 Android Device (`aarch64`)
+### 4.3. On Physical ARM64 SA8155P Android Device (`aarch64`)
+
+This generic ARM64 packaging section does not replace the Android 6.1
+backport procedure. For Android 14 device, first follow
+`GUIDE_4_BACKPORT_ANDROID_6.1_SCX.md`, including the
+`SCX_FCP_ANDROID_61=1` build flag and device-side attach verification.
+
 ```bash
 adb push /tmp/scx_aarch64_bundle /data/local/tmp/scx
 

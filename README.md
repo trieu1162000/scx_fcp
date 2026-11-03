@@ -8,6 +8,22 @@ The `scx_fcp` scheduler targets heterogeneous mobile and automotive SoCs (such a
 
 All scheduling decisions—wakeup token inheritance, utilization estimation, core selection, preemption kicking, and dispatch queue management—are executed in BPF, while the userspace daemon discovers per-CPU capacity topology (`cpu_capacity` / `cpufreq`), populates BPF `.rodata` and maps, and reports real-time telemetry.
 
+## Platform scope
+
+The repository contains separate flows for different Android targets. Do not
+use the Cuttlefish or Android 17 instructions as a physical Android 14 device
+procedure.
+
+| Target | Kernel / ABI | Architecture | Use |
+|---|---|---|---|
+| Android Cuttlefish | Android mainline 7.2.0-rc9, 32 virtual CPUs | x86_64 | `GUIDE_1_CUTTLEFISH_SCX.md` |
+| SA8155P Android 14 device | Android 14 vendor 6.1.145 with `sched_ext` backport | ARM64, 4+3+1 topology | `GUIDE_4_BACKPORT_ANDROID_6.1_SCX.md` |
+
+The `CONFIG_SCHED_PROXY_EXEC` and 6.18/mainline statements below apply to the
+Cuttlefish and Android 17/6.18 flows. For the Android 14 device, verify the
+booted 6.1 configuration, BTF, kfuncs, and struct-ops ABI on the device before
+running a scheduler.
+
 ### How it works
 
 `scx_fcp` partitions tasks into three scheduling tiers—**Tier 0 (`FCP_TIER_CRITICAL`)**, **Tier 1 (`FCP_TIER_INTERACTIVE`)**, and **Tier 2 (`FCP_TIER_BACKGROUND`)**—mapped to three dedicated in-kernel dispatch queues (`FCP_DSQ_CRITICAL`, `FCP_DSQ_INTERACTIVE`, and `FCP_DSQ_BACKGROUND`) alongside per-CPU `SCX_DSQ_LOCAL` queues.
@@ -39,7 +55,7 @@ flowchart TD
 
 1. **Ephemeral Frame Critical-Path Token Propagation (`FCP-Token`)**:
    - Frame pipeline roots (`UIThread`, `RenderThread`, `surfaceflinger`, `composer`, `hwuiTask`, `Choreographer`, or PIDs/TGIDs registered via `--frame-pids`) receive a generation-stamped criticality token (`fcp_token_gen`) with a bounded hop depth (`fcp_depth <= MAX_FCP_DEPTH = 4`) and TTL (`frame_budget_ns`).
-   - When a task holding an active token wakes a synchronous dependency (`SCX_WAKE_SYNC` or a critical root waking a helper thread over Binder/futex/pipe), `fcp_select_cpu()` and `fcp_enqueue()` propagate the token to the wakee with `fcp_depth + 1`. This eliminates transitive priority inversion when a UI thread blocks on a worker or HAL server.
+   - When a task holding an active token wakes a synchronous dependency (`SCX_WAKE_SYNC`), `fcp_select_cpu()` propagates the token to the wakee with `fcp_depth + 1`. The synthetic `fcp_render`, `fcp_binder`, and `fcp_gpu` stages are a narrow futex-based exception on Android 6.1, whose wakeups do not carry `SCX_WAKE_SYNC`; unrelated asynchronous wakeups retain their existing classification.
 2. **Dual-Timescale Burst-Window Utilization (`DT-BWU`)**:
    - Standard 32 ms PELT EWMA (`ewma_util`) decays during VSYNC inter-frame sleep intervals (`8–12 ms`), causing waking frame threads to appear falsely light (`util < 250`) at the start of the next frame (**Sleeping-Pipeline Under-Provisioning**).
    - `scx_fcp` maintains a 4 ms sub-frame burst window (`burst_util`) alongside the 32 ms EWMA and computes effective demand as:

@@ -44,6 +44,7 @@ struct options {
 	unsigned bg_workers;
 	unsigned little_power_mw;
 	unsigned big_power_mw;
+	bool anonymous_comms;
 	const char *scheduler;
 };
 
@@ -57,6 +58,9 @@ struct pipeline {
 	uint64_t stage_cpu_ns[MAX_STAGES];
 	uint64_t stage_little_samples[MAX_STAGES];
 	uint64_t stage_big_samples[MAX_STAGES];
+	uint64_t stage_gold_samples[MAX_STAGES];
+	uint64_t stage_prime_samples[MAX_STAGES];
+	unsigned cpu_cap[128];
 	unsigned cpu_count;
 };
 
@@ -127,8 +131,12 @@ static void *stage_main(void *arg)
 	unsigned stage = ctx->stage;
 	char name[16];
 
-	snprintf(name, sizeof(name), "fcp_%s", stage == 0 ? "ui" :
-		 stage == 1 ? "render" : stage == 2 ? "binder" : "gpu");
+	if (p->opts.anonymous_comms) {
+		snprintf(name, sizeof(name), "anon_s%u", stage);
+	} else {
+		snprintf(name, sizeof(name), "fcp_%s", stage == 0 ? "ui" :
+			 stage == 1 ? "render" : stage == 2 ? "binder" : "gpu");
+	}
 	set_thread_name(name);
 	free(ctx);
 
@@ -145,10 +153,15 @@ static void *stage_main(void *arg)
 
 		cpu = sched_getcpu();
 		if (cpu >= 0 && (unsigned)cpu < p->cpu_count) {
-			if ((unsigned)cpu < p->cpu_count / 2)
+			if ((unsigned)cpu < p->cpu_count / 2) {
 				p->stage_little_samples[stage]++;
-			else
+			} else {
 				p->stage_big_samples[stage]++;
+				if (cpu < 128 && p->cpu_cap[cpu] >= 1000)
+					p->stage_prime_samples[stage]++;
+				else
+					p->stage_gold_samples[stage]++;
+			}
 		}
 
 		if (stage + 1 < p->opts.stages) {
@@ -167,7 +180,7 @@ static void *stage_main(void *arg)
 static void *background_main(void *arg)
 {
 	struct pipeline *p = arg;
-	set_thread_name("fcp_background");
+	set_thread_name(p->opts.anonymous_comms ? "anon_bg" : "fcp_background");
 
 	while (!atomic_load_explicit(&p->stop, memory_order_relaxed))
 		busy_for_ns(200000ULL);
@@ -227,7 +240,8 @@ static void usage(const char *program)
 		"  --stages N             synchronous stages, 1..4 (default: 4)\n"
 		"  --bg-workers N         background CPU workers (default: 2)\n"
 		"  --little-power-mw N    energy estimate (default: 450)\n"
-		"  --big-power-mw N       energy estimate (default: 1400)\n",
+		"  --big-power-mw N       energy estimate (default: 1400)\n"
+		"  --anonymous-comms      use generic thread names (anon_s0..3, anon_bg)\n",
 		program);
 }
 
@@ -242,6 +256,7 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		{"bg-workers", required_argument, NULL, 'b'},
 		{"little-power-mw", required_argument, NULL, 'l'},
 		{"big-power-mw", required_argument, NULL, 'g'},
+		{"anonymous-comms", no_argument, NULL, 'a'},
 		{NULL, 0, NULL, 0},
 	};
 	int option;
@@ -254,6 +269,7 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		.bg_workers = 2,
 		.little_power_mw = 450,
 		.big_power_mw = 1400,
+		.anonymous_comms = false,
 		.scheduler = "unknown",
 	};
 
@@ -283,6 +299,9 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		case 'g':
 			opts->big_power_mw = (unsigned)strtoul(optarg, NULL, 10);
 			break;
+		case 'a':
+			opts->anonymous_comms = true;
+			break;
 		default:
 			usage(argv[0]);
 			exit(EXIT_FAILURE);
@@ -305,6 +324,8 @@ int main(int argc, char **argv)
 	uint64_t critical_cpu_ns = 0;
 	uint64_t little_cpu_ns = 0;
 	uint64_t big_cpu_ns = 0;
+	uint64_t gold_samples = 0;
+	uint64_t prime_samples = 0;
 	uint64_t frame_period_ns;
 	uint64_t thermal_hot_ns = 0;
 	uint64_t next_release;
@@ -320,6 +341,22 @@ int main(int argc, char **argv)
 	if (!p.cpu_count)
 		p.cpu_count = 1;
 	p.opts = opts;
+	for (unsigned c = 0; c < p.cpu_count && c < 128; c++) {
+		char cap_path[128], cap_buf[32];
+		int fd;
+		p.cpu_cap[c] = 1024;
+		snprintf(cap_path, sizeof(cap_path),
+			 "/sys/devices/system/cpu/cpu%u/cpu_capacity", c);
+		fd = open(cap_path, O_RDONLY | O_CLOEXEC);
+		if (fd >= 0) {
+			ssize_t n = read(fd, cap_buf, sizeof(cap_buf) - 1);
+			close(fd);
+			if (n > 0) {
+				cap_buf[n] = '\0';
+				p.cpu_cap[c] = (unsigned)strtoul(cap_buf, NULL, 10);
+			}
+		}
+	}
 	atomic_init(&p.frame_done, 0);
 	atomic_init(&p.stop, false);
 	for (unsigned i = 0; i < MAX_STAGES; i++)
@@ -406,6 +443,8 @@ int main(int argc, char **argv)
 		critical_cpu_ns += p.stage_cpu_ns[i];
 		little_cpu_ns += p.stage_little_samples[i] * opts.stage_us * NS_PER_US;
 		big_cpu_ns += p.stage_big_samples[i] * opts.stage_us * NS_PER_US;
+		gold_samples += p.stage_gold_samples[i];
+		prime_samples += p.stage_prime_samples[i];
 	}
 	qsort(durations, opts.frames, sizeof(*durations), compare_u64);
 
@@ -426,6 +465,7 @@ int main(int argc, char **argv)
 		       "\"mean_ms\":%.3f,\"p50_ms\":%.3f,\"p95_ms\":%.3f,"
 		       "\"p99_ms\":%.3f,\"jank60_pct\":%.3f,\"jank90_pct\":%.3f,\"jank120_pct\":%.3f,"
 		       "\"little_stage_samples\":%llu,\"big_stage_samples\":%llu,"
+		       "\"gold_stage_samples\":%llu,\"prime_stage_samples\":%llu,"
 		       "\"critical_cpu_ms\":%.3f,\"energy_mj_per_frame\":%.3f,"
 		       "\"thermal_samples\":%u,\"thermal_hot_samples\":%u,"
 		       "\"thermal_hot_ms\":%.3f,\"cpu_count\":%u}\n",
@@ -436,6 +476,8 @@ int main(int argc, char **argv)
 		       100.0 * (double)jank120 / opts.frames,
 		       (unsigned long long)(little_cpu_ns / (opts.stage_us * NS_PER_US)),
 		       (unsigned long long)(big_cpu_ns / (opts.stage_us * NS_PER_US)),
+		       (unsigned long long)gold_samples,
+		       (unsigned long long)prime_samples,
 		       (double)critical_cpu_ns / 1000000.0, energy_mj / opts.frames,
 		       thermal_samples, thermal_hot_samples,
 		       (double)thermal_hot_ns / 1000000.0, p.cpu_count);
