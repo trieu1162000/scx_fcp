@@ -46,6 +46,7 @@ struct fcp_cpu_ctx {
 	u64 last_debt_update_ns;
 	u32 curr_tier;
 	u32 curr_is_fcp;
+	u32 last_perf_level;
 	u64 curr_deadline_ns;
 	u32 consec_crit_dispatches;
 	u32 pad;

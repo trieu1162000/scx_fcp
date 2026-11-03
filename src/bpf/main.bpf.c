@@ -69,11 +69,17 @@ struct fcp_task_ctx {
 	u64 token_expire_ns;
 	u64 fcp_deadline_ns;
 	u64 dsq_vtime;
+	u64 last_period_wake_ns;
+	u64 period_ewma_ns;
 	u32 fcp_depth;
+	u32 req_capacity;
 	u32 pid;
 	u8 is_frame_root;
 	u8 is_render_worker;
 	u8 comm_checked;
+	u8 periodicity_score;
+	u8 woke_peer;
+	u8 is_bg_spinner;
 };
 
 #define FCP_MAX_TASKS 16384
@@ -179,11 +185,16 @@ static __always_inline bool match_frame_comm(const char *c)
 	if (c[0] == 's' && c[1] == 'u' && c[2] == 'r' && c[3] == 'f' &&
 	    c[4] == 'a' && c[5] == 'c' && c[6] == 'e')
 		return true;
-	/* SurfaceFlinger VSYNC threads: "TimerDispatch", "app", "sf" */
+	/* SurfaceFlinger VSYNC threads: "TimerDispatch", "app", "appSf", "sf" */
 	if (c[0] == 'T' && c[1] == 'i' && c[2] == 'm' && c[3] == 'e' &&
 	    c[4] == 'r' && c[5] == 'D')
 		return true;
 	if (c[0] == 'a' && c[1] == 'p' && c[2] == 'p' && c[3] == '\0')
+		return true;
+	if (c[0] == 'a' && c[1] == 'p' && c[2] == 'p' && c[3] == 'S' &&
+	    c[4] == 'f' && c[5] == '\0')
+		return true;
+	if (c[0] == 's' && c[1] == 'f' && c[2] == '\0')
 		return true;
 	/* "SurfaceSyncGrou" */
 	if (c[0] == 'S' && c[1] == 'u' && c[2] == 'r' && c[3] == 'f' &&
@@ -192,9 +203,9 @@ static __always_inline bool match_frame_comm(const char *c)
 	/* "HwcAsyncWorker" */
 	if (c[0] == 'H' && c[1] == 'w' && c[2] == 'c')
 		return true;
-	/* "fcp_frame" or "fcp_ui" (exclude "fcp_background" and child stages) */
+	/* "fcp_ui" (stage-0 root; exclude "fcp_frame_bench" harness & "fcp_background") */
 	if (c[0] == 'f' && c[1] == 'c' && c[2] == 'p' && c[3] == '_' &&
-	    (c[4] == 'f' || c[4] == 'u'))
+	    c[4] == 'u' && c[5] == 'i')
 		return true;
 	/* "ui_main" or "uibench" */
 	if ((c[0] == 'u' || c[0] == 'U') && (c[1] == 'i' || c[1] == 'I') &&
@@ -256,24 +267,46 @@ static __always_inline bool is_angle_worker_comm(const char *c)
 	return false;
 }
 
+static __always_inline bool is_bg_worker_comm(const char *c)
+{
+	/* Explicitly exclude background / GC / batch worker threads from FCP tokens */
+	if (c[0] == 'f' && c[1] == 'c' && c[2] == 'p' && c[3] == '_' &&
+	    c[4] == 'b' && c[5] == 'a' && c[6] == 'c' && c[7] == 'k')
+		return true;
+	if (c[0] == 'J' && c[1] == 'i' && c[2] == 't' && c[3] == ' ')
+		return true;
+	if (c[0] == 'H' && c[1] == 'e' && c[2] == 'a' && c[3] == 'p' &&
+	    c[4] == 'T' && c[5] == 'a' && c[6] == 's' && c[7] == 'k')
+		return true;
+	return false;
+}
+
 static __always_inline bool detect_frame_root(struct task_struct *p,
 					      struct fcp_task_ctx *tctx)
 {
 	u32 pid = p->pid;
 	u32 tgid = p->tgid;
+	u8 one = 1;
 
 	if (is_render_pool_comm(p->comm)) {
 		tctx->is_render_worker = 1;
 		return false;
 	}
+	if (is_bg_worker_comm(p->comm) || tctx->is_bg_spinner)
+		return false;
 
+	/*
+	 * Lookup by thread PID (pid). In Android, a process's main UIThread is
+	 * the thread-group leader (pid == tgid), whereas background workers in
+	 * the same process have pid != tgid. Behavioral quasi-periodic roots
+	 * set tctx->is_frame_root = 1 in fcp_runnable after 3 VSYNC epochs.
+	 */
 	if (bpf_map_lookup_elem(&frame_root_pids, &pid)) {
 		tctx->is_frame_root = 1;
 		return true;
 	}
 
 	if (match_frame_comm(p->comm)) {
-		u8 one = 1;
 		tctx->is_frame_root = 1;
 		bpf_map_update_elem(&frame_root_pids, &tgid, &one, BPF_ANY);
 		return true;
@@ -379,10 +412,10 @@ static __always_inline u32 classify_task_tier(struct task_struct *p,
 		if (tctx->avg_runtime_ns < 2500ULL * NSEC_PER_USEC)
 			return FCP_TIER_INTERACTIVE;
 	}
-	/* Tasks with short bursts (< 1.5ms) and frequent wakeups */
-	if (tctx->avg_runtime_ns > 0 &&
-	    tctx->avg_runtime_ns < 1500ULL * NSEC_PER_USEC &&
-	    tctx->wakeup_freq >= 8)
+	/* Tasks that sleep between short bursts (< 1.5ms) are interactive, not batch */
+	if (!tctx->is_bg_spinner && !is_bg_worker_comm(p->comm) &&
+	    tctx->last_sleep_at_ns > 0 &&
+	    tctx->avg_runtime_ns < 1500ULL * NSEC_PER_USEC)
 		return FCP_TIER_INTERACTIVE;
 
 	return FCP_TIER_BACKGROUND;
@@ -435,7 +468,8 @@ static __always_inline void propagate_fcp_token(struct task_struct *p,
 		tctx->is_render_worker = 1;
 		return;
 	}
-	if (is_angle_worker_comm(p->comm))
+	if (is_angle_worker_comm(p->comm) || is_bg_worker_comm(p->comm) ||
+	    tctx->is_bg_spinner)
 		return;
 
 	/* Case 1: Task is a Frame Pipeline Root waking up for a new or ongoing frame */
@@ -451,6 +485,10 @@ static __always_inline void propagate_fcp_token(struct task_struct *p,
 			__sync_fetch_and_add(&stat_fcp_tokens_issued, 1);
 		}
 		tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
+		u64 rem_ns = tctx->token_expire_ns > now ?
+			     tctx->token_expire_ns - now : 0;
+		tctx->req_capacity = (rem_ns <= 5ULL * NSEC_PER_MSEC ||
+				      tctx->util_burst >= 800) ? 1024 : 850;
 		return;
 	}
 
@@ -464,9 +502,19 @@ static __always_inline void propagate_fcp_token(struct task_struct *p,
 	if (!waker || waker->pid == p->pid)
 		return;
 
+	/*
+	 * Allow inheritance on kernel-flagged synchronous wakeups (SCX_WAKE_SYNC,
+	 * e.g. Binder IPC, pipes, unix sockets) OR intra-process futex handoffs
+	 * (waker->tgid == p->tgid, e.g. UIThread -> RenderThread / stage workers).
+	 */
+	if (!(wake_flags & SCX_WAKE_SYNC) && (waker->tgid != p->tgid))
+		return;
+
 	struct fcp_task_ctx *waker_tctx = lookup_task_ctx(waker);
 	if (!waker_tctx)
 		return;
+
+	waker_tctx->woke_peer = 1;
 
 	if ((has_active_fcp_token(waker_tctx, now) || waker_tctx->is_frame_root) &&
 	    waker_tctx->fcp_depth < MAX_FCP_DEPTH) {
@@ -479,6 +527,10 @@ static __always_inline void propagate_fcp_token(struct task_struct *p,
 		tctx->token_expire_ns = waker_exp;
 		tctx->fcp_depth = waker_tctx->fcp_depth + 1;
 		tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
+		u64 rem_ns = waker_exp > now ? waker_exp - now : 0;
+		tctx->req_capacity = (rem_ns <= 5ULL * NSEC_PER_MSEC ||
+				      tctx->fcp_depth >= 3 ||
+				      tctx->util_burst >= 800) ? 1024 : 850;
 		__sync_fetch_and_add(&stat_fcp_tokens_inherited, 1);
 	}
 }
@@ -489,7 +541,9 @@ static __always_inline void propagate_fcp_token(struct task_struct *p,
  * Also sets *need_preempt = true if no idle core is available for a Tier-0
  * Critical-Path task and a busy core is currently running a lower-tier task.
  */
-static __always_inline s32 get_cluster_home_cpu(struct task_struct *p, bool want_big)
+static __always_inline s32 get_cluster_home_cpu(struct task_struct *p,
+						struct fcp_task_ctx *tctx,
+						bool want_big)
 {
 	u32 half = (nr_cpu_ids >> 1);
 	u32 mask = 15;
@@ -509,8 +563,14 @@ static __always_inline s32 get_cluster_home_cpu(struct task_struct *p, bool want
 		mask = 15;
 	}
 
-	cpu = want_big ? (s32)(half + ((u32)p->pid & mask)) :
-			 (s32)((u32)p->pid & mask);
+	u32 idx = (u32)p->pid & mask;
+	if (want_big && tctx) {
+		if (tctx->req_capacity >= 1000)
+			idx = mask;
+		else if (mask == 3 && idx == 3)
+			idx = 1;
+	}
+	cpu = want_big ? (s32)(half + idx) : (s32)((u32)p->pid & mask);
 	if (cpu >= 0 && cpu < MAX_CPUS && bpf_cpumask_test_cpu(cpu, p->cpus_ptr))
 		return cpu;
 	return scx_bpf_task_cpu(p);
@@ -528,7 +588,7 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 	u64 best_big_idle_score = 0, best_little_idle_score = 0;
 	u64 util_eff = task_effective_util(tctx, now);
 	bool want_big = (tier == FCP_TIER_CRITICAL) || tctx->is_render_worker || (util_eff >= 450);
-	s32 home_cpu = get_cluster_home_cpu(p, want_big);
+	s32 home_cpu = get_cluster_home_cpu(p, tctx, want_big);
 
 	*direct_idle = false;
 	*preempt_cpu = -1;
@@ -542,7 +602,8 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 		struct fcp_cpu_ctx *prev_cctx = lookup_cpu_ctx(prev_cpu);
 		u64 prev_debt = prev_cctx ? prev_cctx->thermal_debt : 0;
 
-		if ((want_big && prev_is_big && prev_debt < thermal_debt_cap) ||
+		if (((want_big && prev_is_big && prev_debt < thermal_debt_cap) &&
+		     (tier != FCP_TIER_CRITICAL || prev_cpu == home_cpu)) ||
 		    (!want_big && !prev_is_big)) {
 			if (scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
 				scx_bpf_put_cpumask(idle_cpumask);
@@ -552,7 +613,7 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 		}
 	}
 
-	/* 2. Secondary O(1) fast path: PID-hashed home_cpu in desired cluster */
+	/* 2. Secondary O(1) fast path: capacity-steered home_cpu in desired cluster */
 	if (home_cpu >= 0 && home_cpu < MAX_CPUS &&
 	    bpf_cpumask_test_cpu(home_cpu, p->cpus_ptr) &&
 	    bpf_cpumask_test_cpu(home_cpu, idle_cpumask)) {
@@ -563,30 +624,46 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 		}
 	}
 
-	/* 3. Scan CPUs with bounded verifier-safe loop */
+	/*
+	 * 3. Scan CPUs with a bounded verifier-safe loop (max 12 probes).
+	 * On <=12-core SoCs (e.g., 8-core 4+3+1 ARM64), this scans every core.
+	 * On 32-vCPU Cuttlefish, it probes 6 LITTLE cores and 6 big cores
+	 * strided from p->pid, keeping verifier complexity < 50k insns.
+	 */
 	#pragma unroll
-	for (cpu = 0; cpu < MAX_CPUS; cpu++) {
-		if ((u32)cpu >= nr_cpu_ids)
-			break;
+	for (s32 i = 0; i < 12; i++) {
+		if (nr_cpu_ids <= 12) {
+			if ((u32)i >= nr_cpu_ids)
+				break;
+			cpu = i;
+		} else {
+			cpu = (i < 6) ? (s32)(((u32)p->pid + (u32)i) & 15) :
+					(s32)(16 + (((u32)p->pid + (u32)(i - 6)) & 15));
+		}
+		if (cpu < 0 || cpu >= MAX_CPUS || (u32)cpu >= nr_cpu_ids)
+			continue;
 		if (!bpf_cpumask_test_cpu(cpu, p->cpus_ptr))
 			continue;
 
 		bool big = cpu_is_big(cpu);
 		u64 cap = get_cpu_capacity(cpu);
 		struct fcp_cpu_ctx *cctx = lookup_cpu_ctx(cpu);
-		u64 debt = cctx ? cctx->thermal_debt : 0;
+		u64 debt = cctx ? (cctx->thermal_debt & 1023ULL) : 0;
 		u64 spread = (u64)(((u32)p->pid + (u32)cpu) & 15) * 8;
 
 		if (bpf_cpumask_test_cpu(cpu, idle_cpumask)) {
-			u64 score = 1000 + cap + spread;
+			u64 score = 1024 + cap + spread - debt;
 			if (cpu == prev_cpu)
 				score += 150;
 
 			if (big) {
-				if (debt < score)
-					score -= debt;
-				else
-					score = 1;
+				if (tier == FCP_TIER_CRITICAL) {
+					if (tctx->req_capacity >= 1000 && cap >= 1000)
+						score += 200;
+					else if (tctx->req_capacity < 1000 &&
+						 cap >= tctx->req_capacity && cap < 1000)
+						score += 160;
+				}
 				if (debt >= thermal_debt_cap) {
 					score >>= 2;
 					if (want_big)
@@ -597,8 +674,6 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 					best_big_idle_cpu = cpu;
 				}
 			} else {
-				if (debt < score)
-					score -= (debt >> 1);
 				if (score > best_little_idle_score) {
 					best_little_idle_score = score;
 					best_little_idle_cpu = cpu;
@@ -631,7 +706,14 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 			*direct_idle = true;
 			return best_big_idle_cpu;
 		}
-		return home_cpu;
+		if (home_cpu >= 0)
+			return home_cpu;
+		if (best_little_idle_cpu >= 0 &&
+		    scx_bpf_test_and_clear_cpu_idle(best_little_idle_cpu)) {
+			*direct_idle = true;
+			return best_little_idle_cpu;
+		}
+		return scx_bpf_task_cpu(p);
 	} else {
 		if (best_little_idle_cpu >= 0 &&
 		    scx_bpf_test_and_clear_cpu_idle(best_little_idle_cpu)) {
@@ -643,7 +725,7 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 			*direct_idle = true;
 			return best_big_idle_cpu;
 		}
-		return home_cpu;
+		return home_cpu >= 0 ? home_cpu : scx_bpf_task_cpu(p);
 	}
 }
 
@@ -709,7 +791,7 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 	}
 
 	if (enq_flags & SCX_ENQ_WAKEUP)
-		propagate_fcp_token(p, tctx, 0, now);
+		propagate_fcp_token(p, tctx, SCX_WAKE_SYNC, now);
 
 	tier = classify_task_tier(p, tctx, now);
 
@@ -723,6 +805,14 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 		__sync_fetch_and_add(&stat_crit_dispatches, 1);
 
 		if (preempt_on_crit_wakeup && (enq_flags & SCX_ENQ_WAKEUP)) {
+			if (cpu_is_big(target_cpu)) {
+				struct fcp_cpu_ctx *tcctx = lookup_cpu_ctx(target_cpu);
+				if (tcctx && tcctx->curr_tier != FCP_TIER_CRITICAL) {
+					scx_bpf_kick_cpu(target_cpu, SCX_KICK_PREEMPT);
+					__sync_fetch_and_add(&stat_preempt_kicks, 1);
+					return;
+				}
+			}
 			bool direct_idle = false;
 			s32 preempt_cpu = -1;
 			s32 cand = pick_target_cpu(p, tctx, target_cpu, FCP_TIER_CRITICAL,
@@ -741,24 +831,32 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 		bool want_big = tctx->is_render_worker ||
 				(task_effective_util(tctx, now) >= 450);
 		if (want_big && !cpu_is_big(target_cpu))
-			target_cpu = get_cluster_home_cpu(p, true);
+			target_cpu = get_cluster_home_cpu(p, tctx, true);
 
-		if (target_cpu >= 0 && target_cpu < MAX_CPUS &&
+		if (LINUX_KERNEL_VERSION >= KERNEL_VERSION(6, 12, 0) &&
+		    target_cpu != scx_bpf_task_cpu(p) &&
+		    target_cpu >= 0 && target_cpu < MAX_CPUS &&
 		    bpf_cpumask_test_cpu(target_cpu, p->cpus_ptr)) {
 			scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL_ON | target_cpu,
 					   slice_intr_ns, enq_flags);
 		} else {
-			scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, slice_intr_ns, enq_flags);
+			u64 vtime = fcp_get_dsq_vtime(p, tctx);
+			if (time_before(vtime, vtime_now))
+				vtime = vtime_now;
+			scx_bpf_dsq_insert_vtime(p, FCP_DSQ_INTERACTIVE, slice_intr_ns,
+						 vtime, enq_flags);
 		}
 		__sync_fetch_and_add(&stat_intr_dispatches, 1);
 		return;
 	}
 
-	/* Tier 2: Background / Batch -> strictly isolated onto LITTLE cores (0..15) */
+	/* Tier 2: Background / Batch -> strictly isolated onto LITTLE cores */
 	if (cpu_is_big(target_cpu))
-		target_cpu = get_cluster_home_cpu(p, false);
+		target_cpu = get_cluster_home_cpu(p, tctx, false);
 
-	if (target_cpu >= 0 && target_cpu < MAX_CPUS &&
+	if (LINUX_KERNEL_VERSION >= KERNEL_VERSION(6, 12, 0) &&
+	    target_cpu != scx_bpf_task_cpu(p) &&
+	    target_cpu >= 0 && target_cpu < MAX_CPUS &&
 	    bpf_cpumask_test_cpu(target_cpu, p->cpus_ptr)) {
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL_ON | target_cpu,
 				   slice_bg_ns, enq_flags);
@@ -846,9 +944,6 @@ void BPF_STRUCT_OPS(fcp_runnable, struct task_struct *p, u64 enq_flags)
 	if (!tctx)
 		return;
 
-	if (enq_flags & SCX_ENQ_WAKEUP)
-		propagate_fcp_token(p, tctx, enq_flags, now);
-
 	u64 delta_t = now > tctx->last_woke_at_ns ? now - tctx->last_woke_at_ns : 1;
 	u64 inst_freq = (100ULL * NSEC_PER_MSEC) / delta_t;
 	if (inst_freq > 128)
@@ -856,6 +951,55 @@ void BPF_STRUCT_OPS(fcp_runnable, struct task_struct *p, u64 enq_flags)
 
 	tctx->wakeup_freq = ((tctx->wakeup_freq * 3) + inst_freq) >> 2;
 	tctx->last_woke_at_ns = now;
+
+	/*
+	 * Behavioral Quasi-Periodic VSYNC Root Discovery (in runnable callback):
+	 * Evaluates inter-wakeup period delta_t in [3.5ms, 35ms], bounded jitter
+	 * (< 25%), active burst duty-cycle (< 50%), and causal handoff (woke_peer).
+	 */
+	u64 since_sleep = now > tctx->last_sleep_at_ns ?
+			  now - tctx->last_sleep_at_ns : 0;
+	if (since_sleep >= 1500ULL * NSEC_PER_USEC) {
+		tctx->is_bg_spinner = 0;
+		u64 period_ns = tctx->last_period_wake_ns > 0 && now > tctx->last_period_wake_ns ?
+				now - tctx->last_period_wake_ns : 0;
+		tctx->last_period_wake_ns = now;
+
+		if (period_ns >= 3500ULL * NSEC_PER_USEC &&
+		    period_ns <= 35000ULL * NSEC_PER_USEC) {
+			if (tctx->period_ewma_ns == 0) {
+				tctx->period_ewma_ns = period_ns;
+				tctx->periodicity_score = 1;
+			} else {
+				u64 diff = period_ns > tctx->period_ewma_ns ?
+					   period_ns - tctx->period_ewma_ns :
+					   tctx->period_ewma_ns - period_ns;
+				tctx->period_ewma_ns = ((tctx->period_ewma_ns * 3) + period_ns) >> 2;
+
+				if (diff <= (tctx->period_ewma_ns >> 2) &&
+				    tctx->avg_runtime_ns >= 80ULL * NSEC_PER_USEC &&
+				    tctx->avg_runtime_ns < (tctx->period_ewma_ns >> 1) &&
+				    tctx->woke_peer) {
+					if (tctx->periodicity_score < 8)
+						tctx->periodicity_score += 2;
+					if (tctx->periodicity_score >= 3) {
+						tctx->is_frame_root = 1;
+						if (!has_active_fcp_token(tctx, now)) {
+							tctx->frame_start_ns = now;
+							tctx->token_expire_ns = now + frame_budget_ns;
+							tctx->fcp_depth = 0;
+							tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
+							tctx->req_capacity = 850;
+							__sync_fetch_and_add(&stat_fcp_tokens_issued, 1);
+						}
+					}
+				} else if (tctx->periodicity_score > 0) {
+					tctx->periodicity_score--;
+				}
+			}
+		}
+		tctx->woke_peer = 0;
+	}
 }
 
 void BPF_STRUCT_OPS(fcp_running, struct task_struct *p)
@@ -879,17 +1023,28 @@ void BPF_STRUCT_OPS(fcp_running, struct task_struct *p)
 		cctx->curr_is_fcp = (tier == FCP_TIER_CRITICAL) ? 1 : 0;
 		cctx->curr_deadline_ns = tctx->fcp_deadline_ns;
 
-		/* Scale CPU frequency target immediately for critical-path tasks */
-		if (tier == FCP_TIER_CRITICAL) {
-			scx_bpf_cpuperf_set(cpu, SCX_CPUPERF_ONE);
-		} else {
+		/*
+		 * Scale CPU frequency target only when the optional kfunc exists and
+		 * the requested level changes; running fires for every task switch.
+		 */
+		if (bpf_ksym_exists(scx_bpf_cpuperf_set)) {
 			u64 util = task_effective_util(tctx, now);
-			u64 perf = (util * SCX_CPUPERF_ONE) / FCP_CAP_SCALE;
-			if (perf > SCX_CPUPERF_ONE)
+			u32 perf;
+
+			if (tier == FCP_TIER_CRITICAL) {
 				perf = SCX_CPUPERF_ONE;
-			if (perf < (SCX_CPUPERF_ONE >> 2))
-				perf = SCX_CPUPERF_ONE >> 2;
-			scx_bpf_cpuperf_set(cpu, perf);
+			} else {
+				perf = (util * SCX_CPUPERF_ONE) / FCP_CAP_SCALE;
+				if (perf > SCX_CPUPERF_ONE)
+					perf = SCX_CPUPERF_ONE;
+				if (perf < (SCX_CPUPERF_ONE >> 2))
+					perf = SCX_CPUPERF_ONE >> 2;
+			}
+
+			if (cctx->last_perf_level != perf) {
+				scx_bpf_cpuperf_set(cpu, perf);
+				cctx->last_perf_level = perf;
+			}
 		}
 	}
 }
@@ -941,8 +1096,18 @@ void BPF_STRUCT_OPS(fcp_stopping, struct task_struct *p, bool runnable)
 		tctx->last_sleep_at_ns = now;
 		if (!tctx->is_frame_root && runtime_ns >= 2500ULL * NSEC_PER_USEC)
 			tctx->token_expire_ns = 0;
-	} else if (!tctx->is_frame_root && runtime_ns < 50ULL * NSEC_PER_USEC) {
-		tctx->token_expire_ns = 0;
+	} else {
+		if (!tctx->is_frame_root && runtime_ns < 50ULL * NSEC_PER_USEC)
+			tctx->token_expire_ns = 0;
+		/* Behavioral spinner detection: continuous runnable execution > 12ms */
+		u64 since_sleep = now > tctx->last_sleep_at_ns ?
+				  now - tctx->last_sleep_at_ns : 0;
+		if (since_sleep > 12ULL * NSEC_PER_MSEC && tctx->util_burst > 700) {
+			tctx->is_bg_spinner = 1;
+			tctx->is_frame_root = 0;
+			tctx->periodicity_score = 0;
+			tctx->token_expire_ns = 0;
+		}
 	}
 
 	/* Charge weighted virtual runtime */

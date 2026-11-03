@@ -39,7 +39,7 @@ flowchart TD
 
 1. **Ephemeral Frame Critical-Path Token Propagation (`FCP-Token`)**:
    - Frame pipeline roots (`UIThread`, `RenderThread`, `surfaceflinger`, `composer`, `hwuiTask`, `Choreographer`, or PIDs/TGIDs registered via `--frame-pids`) receive a generation-stamped criticality token (`fcp_token_gen`) with a bounded hop depth (`fcp_depth <= MAX_FCP_DEPTH = 4`) and TTL (`frame_budget_ns`).
-   - When a task holding an active token wakes a synchronous dependency (`SCX_WAKE_SYNC` or a critical root waking a helper thread over Binder/futex/pipe), `fcp_select_cpu()` and `fcp_enqueue()` propagate the token to the wakee with `fcp_depth + 1`. This eliminates transitive priority inversion when a UI thread blocks on a worker or HAL server.
+   - When a task holding an active token wakes a synchronous dependency (`SCX_WAKE_SYNC`), `fcp_select_cpu()` propagates the token to the wakee with `fcp_depth + 1`. The synthetic `fcp_render`, `fcp_binder`, and `fcp_gpu` stages are a narrow futex-based exception on Android 6.1, whose wakeups do not carry `SCX_WAKE_SYNC`; unrelated asynchronous wakeups retain their existing classification.
 2. **Dual-Timescale Burst-Window Utilization (`DT-BWU`)**:
    - Standard 32 ms PELT EWMA (`ewma_util`) decays during VSYNC inter-frame sleep intervals (`8–12 ms`), causing waking frame threads to appear falsely light (`util < 250`) at the start of the next frame (**Sleeping-Pipeline Under-Provisioning**).
    - `scx_fcp` maintains a 4 ms sub-frame burst window (`burst_util`) alongside the 32 ms EWMA and computes effective demand as:
