@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 
 fn main() {
+    // Temporarily support for backport scx in K6.1
+    // TODO: Revert deb6870
     let mut bpf_cflags =
         std::env::var("BPF_EXTRA_CFLAGS_POST_INCL").unwrap_or_else(|_| "-mcpu=v3".to_owned());
     if std::env::var_os("SCX_FCP_ANDROID_61").is_some() {
