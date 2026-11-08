@@ -2,156 +2,217 @@
 
 ## Overview
 
-A Frame Critical-Path & Thermal-Debt Heterogeneous (`big.LITTLE` / tri-cluster) scheduler designed for Android display pipelines and interactive workloads.
+`scx_fcp` is a frame critical-path sched_ext scheduler for heterogeneous
+`big.LITTLE` and tri-cluster Android SoCs. It targets VSYNC-driven display
+pipelines such as `Input -> UIThread -> RenderThread -> surfaceflinger ->
+hwcomposer`, where a slow dependency on a LITTLE core stalls the whole frame.
 
-The `scx_fcp` scheduler targets heterogeneous mobile and automotive SoCs (such as ARM `big.LITTLE` and tri-cluster `LITTLE` / `Big` / `Prime` architectures) running multi-stage, VSYNC-driven display pipelines (`Input` → `UIThread` → `RenderThread` → `surfaceflinger` → `hwcomposer`). `scx_fcp` combines ephemeral critical-path token propagation across synchronous wakeups, dual-timescale burst-window utilization tracking, and predictive thermal-debt core selection.
+This tree is the tuned focus build. Frame roots are admitted from observed
+wakeup behavior and an optional explicit hint set. Admitted roots mint a
+bounded critical-path token, and synchronous or tight same-process handoffs
+propagate that token to their wakees. The decision path does not use thermal
+debt, burst-window utilization, or capacity probing. Those mechanisms belong
+to earlier revisions and are not part of the tuned build.
 
-All scheduling decisions—wakeup token inheritance, utilization estimation, core selection, preemption kicking, and dispatch queue management—are executed in BPF, while the userspace daemon discovers per-CPU capacity topology (`cpu_capacity` / `cpufreq`), populates BPF `.rodata` and maps, and reports real-time telemetry.
+All scheduling decisions run in BPF. The userspace loader discovers CPU
+capacity topology, writes BPF `.rodata`, optionally registers frame-root PIDs,
+attaches the scheduler through `bpf_struct_ops`, and prints counters.
+
+## How it works
+
+Tasks are split into three tiers.
+
+- Tier 0 `FCP_TIER_CRITICAL` holds frame roots and active token holders.
+- Tier 1 `FCP_TIER_INTERACTIVE` holds render and ANGLE pool threads, short
+  high-weight tasks, and short-sleeping tasks.
+- Tier 2 `FCP_TIER_BACKGROUND` holds everything else.
+
+Each tier has a dedicated DSQ. Critical tasks also use direct local dispatch
+and wakeup preemption when an idle big core is available.
+
+```mermaid
+flowchart TD
+    Wakeup["Wakeup / enqueue"] --> Token["Frame root admission<br/>and token inheritance"]
+    Token --> Tier0[("FCP_DSQ_CRITICAL")]
+    Token --> Tier1[("FCP_DSQ_INTERACTIVE")]
+    Token --> Tier2[("FCP_DSQ_BACKGROUND")]
+    Tier0 --> Big["big / Prime CPU"]
+    Tier1 --> Big
+    Tier1 --> Little["LITTLE CPU"]
+    Tier2 --> Little
+```
+
+### Behavioral frame-root admission
+
+A task can become a root after a real block, not after preemption. The
+admission rule requires all of the following.
+
+- A sleep of at least `500 us`.
+- A period between `3500 us` and `35000 us`.
+- Average runtime of at least `80 us` and at most half the period.
+- A wakeup that hands work to a peer thread.
+
+The period estimate is an EWMA. A qualifying wake adds 2 to a score capped at
+10, a non-qualifying wake subtracts 1, and a score of 7 promotes the task. Two
+consecutive missed periods demote a behavioral root. A demoted task cannot
+rebuild its score for `50 ms`. The root unit is the thread ID, not the TGID.
+Downstream tasks that inherit a token do not promote themselves in the same
+epoch.
+
+The default and named builds also accept the legacy comm allowlist and the
+`frame_root_pids` map. The zero-hint build disables both hint sources and uses
+behavior only.
+
+### Bounded token inheritance
+
+A wake edge is eligible when the waker still holds an unexpired token and the
+wake is either marked `SCX_WAKE_SYNC` or stays within the same TGID and occurs
+within `1 ms` of the waker's last run. The child inherits the absolute frame
+expiry, never extends it, and never lowers an existing depth. Inheritance stops
+at depth 3. A token is revoked after `2.5 ms` of service on a real block, or
+after a short yield below `50 us`. Token steps run once per wake in
+`select_cpu` with the real wake flags.
+
+### Placement and dispatch
+
+- Critical tasks prefer an idle big or Prime CPU. If none is idle, the
+  scheduler may preempt a big CPU running a lower tier and kick it with
+  `SCX_KICK_PREEMPT`.
+- Interactive tasks prefer their previous CPU and then an idle LITTLE CPU,
+  with a big idle fallback.
+- Background tasks stay on the LITTLE cluster when possible.
+- Big CPUs dispatch critical, then interactive, then background. LITTLE CPUs
+  dispatch interactive, then background, then critical.
+- A starvation guard rescues one background task after 128 consecutive
+  critical or interactive dispatches on a CPU.
+
+## Build variants
+
+`build.rs` selects a BPF variant through `SCX_FCP_BUILD`.
+
+| Value | Ops name | Root hints |
+|---|---|---|
+| unset | `fcp` | comm allowlist and PID map |
+| `named` | `fcp_nh` | comm allowlist and PID map |
+| `zero-hint` | `fcp_zh` | none, behavior only |
+| `oracle` | `fcp_or` | evaluation build |
+
+`SCX_FCP_ANDROID_61` is not part of this mainline tree. The Android 6.1 backport is maintained separately.
 
 ## Platform scope
 
-The repository contains separate flows for different Android targets. Do not
-use the Cuttlefish or Android 17 instructions as a physical Android 14 device
-procedure.
+| Target | Kernel / ABI | Architecture |
+|---|---|---|
+| Android Cuttlefish | Android mainline 6.18 or 7.x | x86_64 |
+| SA8155P Android 14 | vendor 6.1.145 with sched_ext backport | ARM64, 4+3+1 |
 
-| Target | Kernel / ABI | Architecture | Use |
-|---|---|---|---|
-| Android Cuttlefish | Android mainline 7.2.0-rc9, 32 virtual CPUs | x86_64 | `GUIDE_1_CUTTLEFISH_SCX.md` |
-| SA8155P Android 14 device | Android 14 vendor 6.1.145 with `sched_ext` backport | ARM64, 4+3+1 topology | `GUIDE_4_BACKPORT_ANDROID_6.1_SCX.md` |
+Verify the booted kernel configuration, BTF, kfuncs, and struct-ops ABI before
+attaching on a physical device.
 
-The `CONFIG_SCHED_PROXY_EXEC` and 6.18/mainline statements below apply to the
-Cuttlefish and Android 17/6.18 flows. For the Android 14 device, verify the
-booted 6.1 configuration, BTF, kfuncs, and struct-ops ABI on the device before
-running a scheduler.
+## Options
 
-### How it works
+- `-f`, `--frame-budget-us`: frame budget used for token TTL and deadlines.
+  Default `16667` for 60 Hz, use `11111` for 90 Hz and `8333` for 120 Hz.
+- `-c`, `--slice-crit-us`: critical slice, default `2000`.
+- `-i`, `--slice-intr-us`: interactive slice, default `3000`.
+- `-b`, `--slice-bg-us`: background slice, default `6000`.
+- `--big-cpus`: comma-separated big or Prime CPU IDs. If omitted, the loader
+  reads `cpu_capacity` and falls back to the upper half of the CPU set.
+- `--frame-pids`: comma-separated thread IDs added to `frame_root_pids`.
+  Rejected by the zero-hint build.
+- `-s`, `--stats-interval-s`: telemetry interval, default 2 seconds. Zero
+  disables the periodic counters.
 
-`scx_fcp` partitions tasks into three scheduling tiers—**Tier 0 (`FCP_TIER_CRITICAL`)**, **Tier 1 (`FCP_TIER_INTERACTIVE`)**, and **Tier 2 (`FCP_TIER_BACKGROUND`)**—mapped to three dedicated in-kernel dispatch queues (`FCP_DSQ_CRITICAL`, `FCP_DSQ_INTERACTIVE`, and `FCP_DSQ_BACKGROUND`) alongside per-CPU `SCX_DSQ_LOCAL` queues.
+## Topology discovery
 
-```mermaid
-%%{init: {"layout": "dagre", "flowchart": {"htmlLabels": false, "curve": "linear", "nodeSpacing": 20, "rankSpacing": 35}}}%%
-flowchart TD
-    Wakeup["Wakeup / Enqueue"] --> Token["FCP-Token<br/>Inheritance and DT-BWU"]
+The loader uses three steps.
 
-    Token --> Tier0[("FCP_DSQ<br/>CRITICAL")]
-    Token --> Tier1[("FCP_DSQ<br/>INTERACTIVE")]
-    Token --> Tier2[("FCP_DSQ<br/>BACKGROUND")]
+1. `--big-cpus` marks the listed CPUs as big with capacity 1024 and all other
+   CPUs as LITTLE with capacity 446.
+2. Otherwise it reads `/sys/devices/system/cpu/cpu*/cpu_capacity` and marks
+   CPUs at or above the midpoint of the observed minimum and maximum as big.
+3. On uniform SMP systems it marks the upper half of the online CPUs as big.
 
-    Tier0 -->|Direct Local<br/>/ Preempt| Big0["big / Prime<br/>CPU N"]
-    Tier0 -->|Direct Local<br/>/ Preempt| Big1["big / Prime<br/>CPU N+1"]
-    Tier0 -.->|Thermal Spill<br/>/ Rescue| Lit0["LITTLE<br/>CPU 0"]
+## Telemetry
 
-    Tier1 --> Big0
-    Tier1 --> Big1
-    Tier1 --> Lit0
-    Tier1 --> Lit1["LITTLE<br/>CPU 1"]
-
-    Tier2 --> Lit0
-    Tier2 --> Lit1
-    Tier2 -.->|Work Conserving<br/>Idle| Big0
-```
-
-`scx_fcp` operates through three coupled mechanisms in BPF:
-
-1. **Ephemeral Frame Critical-Path Token Propagation (`FCP-Token`)**:
-   - Frame pipeline roots (`UIThread`, `RenderThread`, `surfaceflinger`, `composer`, `hwuiTask`, `Choreographer`, or PIDs/TGIDs registered via `--frame-pids`) receive a generation-stamped criticality token (`fcp_token_gen`) with a bounded hop depth (`fcp_depth <= MAX_FCP_DEPTH = 4`) and TTL (`frame_budget_ns`).
-   - When a task holding an active token wakes a synchronous dependency (`SCX_WAKE_SYNC`), `fcp_select_cpu()` propagates the token to the wakee with `fcp_depth + 1`. The synthetic `fcp_render`, `fcp_binder`, and `fcp_gpu` stages are a narrow futex-based exception on Android 6.1, whose wakeups do not carry `SCX_WAKE_SYNC`; unrelated asynchronous wakeups retain their existing classification.
-2. **Dual-Timescale Burst-Window Utilization (`DT-BWU`)**:
-   - Standard 32 ms PELT EWMA (`ewma_util`) decays during VSYNC inter-frame sleep intervals (`8–12 ms`), causing waking frame threads to appear falsely light (`util < 250`) at the start of the next frame (**Sleeping-Pipeline Under-Provisioning**).
-   - `scx_fcp` maintains a 4 ms sub-frame burst window (`burst_util`) alongside the 32 ms EWMA and computes effective demand as:
-
-     $`\mathbf{effective\_util(p) = \max\left(ewma\_util(p),\ \alpha \cdot burst\_util(p)\right)}`$
-
-     preserving active-phase demand across VSYNC sleep gaps so waking UI stages are immediately placed on high-capacity cores.
-3. **Predictive Thermal-Debt Energy-Aware Core Selection (`PTD-EAS`)**:
-   - Each CPU tracks an exponentially decaying `thermal_debt` (`0..2048`) scaled by its dynamic power coefficient (`cpu_dyn_power`).
-   - On wakeup (`fcp_select_cpu`), Tier-0 (`FCP_TIER_CRITICAL`) and high-demand Tier-1 (`FCP_TIER_INTERACTIVE`) tasks prefer idle `big`/`Prime` cores whose `thermal_debt < thermal_debt_cap`. If all `big` cores are busy, Tier-0 tasks preempt a `big` core currently running a `FCP_TIER_BACKGROUND` task via `scx_bpf_kick_cpu(cpu, SCX_KICK_PREEMPT)`.
-   - When a CPU's `thermal_debt` exceeds `thermal_debt_cap`, tasks spill to cooler `big` or `LITTLE` cores (`nr_thermal_spills`), preventing hard hardware thermal throttling cliffs.
-   - To guarantee zero starvation under sustained UI load, `fcp_dispatch()` enforces a bounded rescue rule: every 8 consecutive dispatches (`> 7`), if the oldest task in `FCP_DSQ_BACKGROUND` has waited longer than 3 × `frame_budget_ns`, it is rescued before `FCP_DSQ_INTERACTIVE`.
-
----
-
-## Use Cases
-
-`scx_fcp` is designed for latency-sensitive interactive and display-pipeline workloads on heterogeneous multicore systems, including Android smartphones, tablets, and automotive IVI cockpit systems (such as Qualcomm Snapdragon Automotive `SA8155P` / `SA6155P`), as well as desktop/gaming workloads with synchronous producer-consumer chains.
-
-### Android UI & Automotive Cockpit Workloads
-
-`scx_fcp` automatically detects standard Android display pipeline thread names (`UIThread`, `RenderThread`, `surfaceflinger`, `composer`, `hwuiTask`, `Choreographer`, `android.ui`, `android.anim`, `android.display`) without requiring framework modifications. Relevant options for Android and display workloads:
-
-- `-f` / `--frame-budget-us`: Sets the target VSYNC frame deadline in microseconds (`16667` for 60 Hz, `11111` for 90 Hz, `8333` for 120 Hz). Controls token TTL, vtime deadline scaling, and background starvation rescue thresholds.
-- `-c` / `--slice-crit-us`: Time slice for Tier-0 (`FCP_TIER_CRITICAL`) tasks (default `2000` us). Short critical slices prevent long-running tasks from monopolizing `big` cores while allowing sub-frame stages (`0.5–2 ms`) to run to completion without preemption.
-- `-i` / `--slice-intr-us`: Time slice for Tier-1 (`FCP_TIER_INTERACTIVE`) tasks (default `3000` us).
-- `-b` / `--slice-bg-us`: Time slice for Tier-2 (`FCP_TIER_BACKGROUND`) tasks (default `6000` us).
-- `-t` / `--thermal-debt-cap`: Per-CPU thermal debt threshold (`0..2048`, default `850`) before steering tasks away from thermally saturated `big` cores.
-- `--big-cpus`: Comma-separated list of `big`/`Prime` CPU IDs (e.g., `--big-cpus 4,5,6,7` on an 8-core `4+3+1` SoC).
-- `--frame-pids`: Comma-separated list of additional PIDs/TGIDs to register as explicit Frame Pipeline Roots in the `frame_root_pids` BPF map.
-
-### Big/Little and Tri-Cluster Support
-
-`scx_fcp` automatically discovers heterogeneous core capacities at startup using a four-step fallback:
-
-1. **Explicit CLI override (`--big-cpus`)**: Marks the specified CPUs as `big` (`capacity = 1024`) and remaining CPUs as `LITTLE` (`capacity = 446`).
-2. **Sysfs `cpu_capacity`**: Reads `/sys/devices/system/cpu/cpu*/cpu_capacity` (populated by ARM64 device-tree / ACPI `capacity-dmips-mhz`) and classifies cores with capacity $\ge \frac{\min + \max}{2}$ as `big`/`Prime`.
-3. **Sysfs `cpufreq` (`cpuinfo_max_freq`)**: On Qualcomm kernels where `cpu_capacity` is not exposed or uniform, reads `/sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq` and normalizes capacities to `1024` against the maximum cluster frequency (e.g., `SA8155P` Kryo 485: Silver `1.8 GHz` → `633`, Gold `2.4 GHz` → `851`, Prime `2.84 GHz` → `1024`).
-4. **SMP fallback**: On uniform SMP systems or virtual machines without `cpu_capacity` or `cpufreq`, assigns the upper half of CPUs as logical `big` cores and the lower half as logical `LITTLE` cores.
-
-### Configuration
-
-`scx_fcp` prints periodic telemetry every `-s` / `--stats-interval-s` seconds (default `2` s; set `-s 0` to disable):
+The default build prints three counter lines every stats interval.
 
 ```text
-[scx_fcp] crit=59294 intr=155437 bg=60419 tokens_issued=54119 tokens_inherited=31017 preempt_kicks=2512 big=115842 little=151021 therm_spills=0 rescues=0
+[scx_fcp] crit=... intr=... bg=... big=... little=... preempt_kicks=... rescues=...
+[scx_fcp] roots beh=... comm=... pid=... prom=... demote=... suppressed=... token_sel=... token_enq=...
+[scx_fcp] token issued=... inherited=... edges elig=... inh=... sync=... tgid=... async_rej=... depth_block=... revoke=... expire=... first_big=.../... depth_hist=...
 ```
 
-- `crit` / `intr` / `bg`: Enqueue counts across the three tiers.
-- `tokens_issued` / `tokens_inherited`: Critical-path tokens minted by frame roots vs. inherited across synchronous wakeups (`FCP-Token`).
-- `preempt_kicks`: Number of times a waking critical-path task preempted a background task on a `big` core (`SCX_KICK_PREEMPT`).
-- `big` / `little`: Task placements on `big`/`Prime` vs. `LITTLE` cores.
-- `therm_spills`: Placements diverted due to `thermal_debt >= thermal_debt_cap`.
-- `rescues`: Background tasks rescued from `FCP_DSQ_BACKGROUND` to prevent starvation.
+The tuning line reports cooldown blocks, edge budget rejects, TGID window
+rejects, and capped preemption kicks. The zero-hint build reports zero for the
+comm and PID root counters.
 
-### Kernel Requirements
+## Kernel requirements
 
-- **`CONFIG_SCHED_CLASS_EXT=y`** and **`CONFIG_DEBUG_INFO_BTF=y`**:
-  - Supported natively on Linux `6.12+` (including Android mainline `6.18` / `7.x`) and on Android GKI `6.1` kernels with the `sched_ext` backport.
-- **`CONFIG_SCHED_PROXY_EXEC=n` (or disabled via boot arg `sched_proxy_exec=0`)**:
-  - On Android GKI kernel (`android17-6.18`) that didn't carry compatibility Proxy Execution patches, Proxy Execution must be disabled when running `sched_ext` schedulers. Otherwise, there is a kernel panic; see the [Proxy Execution compatibility issue](https://partnerissuetracker.corp.google.com/u/2/issues/580105033).
-  - On Android mainline kernel (`android-mainline` aka 7.2), Proxy Execution is disabled when enabling `CONFIG_SCHED_CLASS_EXT` because the guard is still there `depends on !CONFIG_SCHED_CLASS_EXT`.
-- **`CONFIG_FUNCTION_TRACER` is optional**:
-  - Unlike schedulers that require tracefs `available_filter_functions`, `scx_fcp` runs entirely via `bpf_struct_ops` (`sched_ext_ops`) and works on production Android GKI kernels where `CONFIG_FUNCTION_TRACER` is disabled.
+- `CONFIG_SCHED_CLASS_EXT=y`
+- `CONFIG_DEBUG_INFO_BTF=y`
+- `CONFIG_BPF=y`, `CONFIG_BPF_SYSCALL=y`, `CONFIG_BPF_JIT=y`
+- `CONFIG_EXT_GROUP_SCHED=y`
+- `CONFIG_SCHED_PROXY_EXEC=n` on Android GKI kernels that do not carry the
+  sched_ext compatibility patches.
 
-### Setup, Build & Run
+`CONFIG_FUNCTION_TRACER` is optional because the scheduler attaches through
+`bpf_struct_ops` and does not use tracefs function filters.
+
+## Build and test
+
+The canonical implementation lives in an `scx` workspace at
+`$SCX_ROOT/scheds/rust/scx_fcp`. This repository mirrors that scheduler
+directory. Set `SCX_ROOT` to the workspace path.
 
 ```bash
-# Build scx_fcp and the 4-stage frame pipeline benchmark
-cargo build --release -p scx_fcp
+# Build statically linked profiles and the synthetic benchmark.
+SCX_ROOT=$HOME/workspace/scx scripts/build_static.sh
 
-# Run scx_fcp (60 Hz = 16667 us frame budget, 2 s telemetry interval)
-sudo ./target/release/scx_fcp -f 16667 -c 2000 -i 3000 -b 6000 -t 850 -s 2a
+# Run the synthetic frame pipeline benchmark on the host.
+BIN_DIR=$PWD/build/bin SCHEDULER_LABEL=scx_fcp tests/synthetic/run_fcp_frame_bench.sh
+
+# Run a JankBench sample on a connected device.
+BIN_DIR=$PWD/build/bin SERIAL=127.0.0.1:6520 \
+  tests/jankbench/run_jankbench.sh -p scx_fcp_behavioral -n 1
 ```
 
-For complete setup, cross-compilation (`x86_64` & `aarch64`), Android bundle packaging, and evaluation instructions, see:
-- **[`SETUP.md`](SETUP.md)** — End-to-end build, kernel configuration, Android bundle packaging, and benchmark setup
+See `REPRODUCE.md` and `tests/README.md` for device setup, environment
+variables, and result layout. See `SETUP.md` for cross-compilation, Android
+bundles, and kernel configuration.
 
----
+## Use cases
 
-## Things you probably shouldn't use `scx_fcp` for
+`scx_fcp` is intended for latency-sensitive interactive and display workloads
+on heterogeneous multicore systems, including Android phones and tablets,
+automotive IVI, and desktop systems with synchronous producer-consumer chains.
 
-- Purely throughput-oriented, non-interactive batch/HPC server workloads on homogeneous multi-socket NUMA machines where LLC/NUMA pick-2 load balancing (`scx_p2dq`) or flat batch scheduling is preferred.
-- Workloads that require hard cgroup CPU bandwidth throttling (`cpu.max`).
-
-## Support
-
-Create an [Issue](https://github.com/sched-ext/scx/issues/new?labels=scx_fcp&title=scx_fcp:%20New%20Issue&body=Kernel%20version:%20(fill%20me%20out)%0ADistribution%20/%20Android%20version:%20(fill%20me%20out)%0AHardware%20/%20SoC:%20(fill%20me%20out)%0A%0AIssue:%20(fill%20me%20out))
+It is not intended for throughput-oriented batch or HPC workloads on
+homogeneous NUMA servers, or for workloads that require hard cgroup bandwidth
+throttling through `cpu.max`.
 
 ## FAQ
 
-- **Why does `scx_fcp` outperform general-purpose schedulers (`EEVDF`, `scx_p2dq`, `scx_lavd`) on asymmetric `big.LITTLE` UI benchmarks?**
-  - General-purpose schedulers classify each thread's interactivity in isolation and rely on single-timescale utilization averages. In a multi-stage Android UI pipeline (`UIThread` → `RenderThread` → `Binder/HAL` → `surfaceflinger`), a helper thread that wakes only briefly per frame appears low-utilization and gets placed on a slow `LITTLE` core while the `UIThread` blocks waiting for it. `scx_fcp` propagates the frame root's criticality token across synchronous wakeups (`FCP-Token`) and preserves sub-frame burst demand (`DT-BWU`), steering all dependent critical stages onto `big` cores (`>99%` big-core placement).
-- **Why does `scx_fcp` have lower BPF scheduling overhead per syscall than `scx_lavd` and `scx_p2dq`?**
-  - `scx_fcp` uses a zero-lookup $O(1)$ fast path in `fcp_select_cpu()` (`scx_bpf_select_cpu_dfl` + cached `tctx->home_cpu`) and lockless direct local dispatch (`SCX_DSQ_LOCAL_ON`) for Tier-1 and Tier-2 tasks, avoiding cross-CPU DSQ lock contention on high-rate wakeup microbenchmarks.
-- **How do I run `scx_fcp` for a custom benchmark or game whose thread names don't match Android's UI threads?**
-  - Pass the process PID/TGID via `--frame-pids <PID1,PID2>` (or name worker threads with a `UI` / `Render` / `FCP_` prefix). `scx_fcp` will treat those threads as Frame Pipeline Roots and propagate tokens to any helper threads they wake synchronously.
-- **Does `scx_fcp` starve background compilation or I/O threads during heavy UI rendering?**
-  - No. `FCP_DSQ_BACKGROUND` is work-conserving whenever `big` or `LITTLE` cores are idle, and `fcp_dispatch()` enforces a deterministic starvation bound (3 × `frame_budget_ns`, e.g. `50 ms` at 60 Hz) that rescues aging background tasks even under continuous 100% UI load.
+**Why does a brief helper thread need a token?**
+
+A helper that wakes only once per frame can look light in isolation. If the UI
+thread blocks on that helper, the frame waits for wherever the helper runs.
+Token inheritance moves the helper to the same critical tier as the frame root
+for the remainder of the frame.
+
+**Does a token live forever?**
+
+No. The token expires at the frame budget, is capped at depth 3, and is revoked
+after `2.5 ms` of service on a block. A preempted task does not start a new
+frame epoch.
+
+**Does the scheduler use thermal debt or burst utilization?**
+
+Not in this build. The tuned decision path uses root state, token state, task
+runtime history, CPU capacity class, and idle state. The package description
+still carries the original project name.
+
+**How do I mark a custom benchmark thread as a root?**
+
+Use `--frame-pids TID` with the default or named build, or name the thread with
+a recognized UI or render prefix. The zero-hint build accepts behavior only.
