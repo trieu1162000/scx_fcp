@@ -31,19 +31,16 @@ enum fcp_consts {
 	/* Fixed-point capacity and utilization scale [0 .. 1024] */
 	FCP_CAP_SCALE		= 1024ULL,
 
-	/* Task classification tiers */
+	/* Task classification tiers. NONE is a CPU-state sentinel, not a tier. */
 	FCP_TIER_CRITICAL	= 0,
 	FCP_TIER_INTERACTIVE	= 1,
 	FCP_TIER_BACKGROUND	= 2,
+	FCP_TIER_NONE		= 3,
 };
 
 struct fcp_cpu_ctx {
 	u64 tot_runtime_ns;
 	u64 last_run_at_ns;
-	u64 util_pelt;
-	u64 util_burst;
-	u64 thermal_debt;
-	u64 last_debt_update_ns;
 	u32 curr_tier;
 	u32 curr_is_fcp;
 	u32 last_perf_level;
@@ -61,8 +58,26 @@ struct fcp_stats {
 	u64 nr_preempt_kicks;
 	u64 nr_big_core_placements;
 	u64 nr_little_core_placements;
-	u64 nr_thermal_spills;
 	u64 nr_starvation_rescues;
+	u64 nr_root_src_behavior;
+	u64 nr_root_src_comm;
+	u64 nr_root_src_pid;
+	u64 nr_root_promotions;
+	u64 nr_root_demotions;
+	u64 nr_root_downstream_suppressed;
+	u64 nr_token_select_calls;
+	u64 nr_token_enqueue_calls;
+	u64 nr_edges_eligible;
+	u64 nr_edges_inherited;
+	u64 nr_edges_sync_flag;
+	u64 nr_edges_same_tgid;
+	u64 nr_edges_async_rejected;
+	u64 nr_depth_regress_blocked;
+	u64 nr_token_revocations;
+	u64 nr_token_expiry;
+	u64 nr_first_big_hits;
+	u64 nr_first_big_misses;
+	u64 nr_depth_hist[MAX_FCP_DEPTH + 1];
 };
 
 #endif /* __FCP_INTF_H */
