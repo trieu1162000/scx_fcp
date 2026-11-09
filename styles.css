@@ -31,6 +31,21 @@ body {
   padding-bottom: 3.5rem;
 }
 
+.brand-mark {
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0 auto 1rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--ink), var(--accent));
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow: 0 10px 24px rgba(8, 81, 156, 0.22);
+}
+
 .eyebrow {
   color: var(--accent);
   font-size: 0.83rem;
@@ -122,6 +137,16 @@ body {
   letter-spacing: -0.02em;
 }
 
+.section .title::after {
+  content: "";
+  display: block;
+  width: 2.4rem;
+  height: 3px;
+  margin: 0.65rem auto 0;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
 .section-lead {
   max-width: 44rem;
   margin: -0.6rem auto 2rem;
@@ -158,6 +183,12 @@ body {
   border-radius: 0.8rem;
   padding: 1.4rem;
   box-shadow: 0 8px 24px rgba(20, 33, 61, 0.05);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.method-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px rgba(20, 33, 61, 0.09);
 }
 
 .method-card .step {
