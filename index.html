@@ -55,12 +55,6 @@
                 </a>
               </span>
               <span class="link-block">
-                <a href="#build" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-terminal"></i></span>
-                  <span>Build &amp; run</span>
-                </a>
-              </span>
-              <span class="link-block">
                 <a href="https://github.com/trieu1162000/scx_fcp" target="_blank" rel="noopener"
                    class="external-link button is-normal is-rounded is-dark">
                   <span class="icon"><i class="fab fa-github"></i></span>
@@ -263,45 +257,7 @@
   </div>
 </section>
 
-<section class="section" id="build">
-  <div class="container is-max-desktop">
-    <div class="columns is-centered has-text-centered">
-      <div class="column is-four-fifths">
-        <h2 class="title is-3">Build &amp; run</h2>
-        <div class="content has-text-justified">
-          <p>
-            The scheduler is part of the scx workspace and builds with Cargo. It runs on any kernel
-            with sched_ext and BTF; the Android 6.1 backport lives in a separate repository.
-          </p>
-          <pre><code># Build the scheduler
-cargo build --release -p scx_fcp
-
-# Attach at 60 Hz (16667 us frame budget), 2 s telemetry
-sudo ./target/release/scx_fcp -f 16667 -c 2000 -i 3000 -b 6000 -t 850 -s 2</code></pre>
-          <p>Kernel requirements:</p>
-          <ul>
-            <li><code>CONFIG_SCHED_CLASS_EXT=y</code></li>
-            <li><code>CONFIG_DEBUG_INFO_BTF=y</code></li>
-            <li>
-              <code>CONFIG_SCHED_PROXY_EXEC=n</code> on Android GKI kernels that carry Proxy
-              Execution; it conflicts with sched_ext dispatch queues.
-            </li>
-            <li>
-              <code>CONFIG_FUNCTION_TRACER</code> is optional: scx_fcp attaches purely through
-              <code>bpf_struct_ops</code>.
-            </li>
-          </ul>
-          <p>
-            Full setup, cross-compilation, Android bundle packaging, and benchmark instructions are
-            in the repository's <code>SETUP.md</code>.
-          </p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="section hero is-light" id="repositories">
+<section class="section" id="repositories">
   <div class="container is-max-desktop">
     <h2 class="title is-3 has-text-centered">Repositories</h2>
     <div class="columns is-centered">
