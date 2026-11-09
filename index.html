@@ -49,6 +49,12 @@
                 </a>
               </span>
               <span class="link-block">
+                <a href="#measurements" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-chart-line"></i></span>
+                  <span>Measurements</span>
+                </a>
+              </span>
+              <span class="link-block">
                 <a href="#build" class="external-link button is-normal is-rounded is-dark">
                   <span class="icon"><i class="fas fa-terminal"></i></span>
                   <span>Build &amp; run</span>
@@ -73,13 +79,14 @@
   <div class="container is-max-desktop">
     <div class="hero-body">
       <div class="content has-text-centered">
-        <img src="assets/figures/frame_pipeline.svg"
-             alt="Conceptual frame-time model: scheduled work, runqueue waits, and handoffs">
+        <img src="assets/figures/problem.svg"
+             alt="A cross-process frame chain collapses into independent per-task scheduler records">
         <p class="figure-caption">
-          Conceptual frame-time model: colored bars denote scheduled work, dotted gray intervals
-          denote runqueue waiting, and arrows denote candidate wakeup or IPC handoffs. The frame
-          deadline is met only if waiting, service time, and inter-stage handoff delays fit within
-          the frame budget. Horizontal placement is explanatory, not measured.
+          A frame chain collapses into independent scheduler records. The upper layer shows the
+          schematic cross-process frame path. Below the user/kernel boundary, each observed wakeup
+          updates its aligned per-task record, and the records feed a shared run queue and CPU
+          dispatcher. The stock scheduler retains no frame identifier, dependency chain, or shared
+          deadline.
         </p>
       </div>
     </div>
@@ -110,8 +117,8 @@
             capacity, populates BPF maps and rodata, and reports telemetry.
           </p>
           <p class="status-note">
-            Status: experimental research prototype. Options and telemetry may change, and the
-            project does not make a performance claim on this page.
+            Status: experimental research prototype. Options and telemetry may change. Measurements
+            on this page track the current development snapshot and are not a final performance claim.
           </p>
         </div>
       </div>
@@ -126,19 +133,19 @@
         <h2 class="title is-3">How it works</h2>
         <div class="content has-text-justified">
           <p>
-            The policy combines three mechanisms: bounded criticality propagation, burst-window
-            utilization, and thermal-aware core selection.
+            The policy infers a frame root from wakeup behavior, carries a bounded token across
+            synchronous and recent same-thread-group edges, and uses the token for placement. The
+            application, framework, graphics stack, and kernel remain unchanged.
           </p>
         </div>
 
-        <img src="assets/figures/scxfcp_architecture.svg"
-             alt="scx_fcp mechanism overview">
+        <img src="assets/figures/mechanism.svg"
+             alt="Frame-context scheduling in a loadable sched_ext policy">
         <p class="figure-caption">
-          Mechanism overview. Candidate-root evidence seeds a bounded token that propagates on
-          eligible wakeups; a same-thread-group edge is a dashed proxy, not a verified dependency.
-          Remaining slack and an EWMA of scheduled run intervals determine urgency and requested
-          CPU capacity (clipped to [1,1024]). The EWMA is not a direct estimate of future work;
-          wakeup and capacity inferences remain heuristic.
+          Frame-context scheduling in a loadable policy. Wakeup behavior promotes a root; its token
+          crosses only synchronous or recent same-thread-group edges, expires with the frame budget,
+          and is bounded to depth three. Token holders enter the critical queue and prefer an idle
+          high-capacity CPU. Android user space and the Linux kernel remain unchanged.
         </p>
 
         <div class="content has-text-justified">
@@ -167,7 +174,40 @@
   </div>
 </section>
 
-<section class="section hero is-light" id="build">
+<section class="section hero is-light" id="measurements">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Measurements</h2>
+        <div class="content has-text-justified">
+          <p>
+            Current development snapshot on the Cuttlefish and device testbeds. The plots track
+            work in progress; they are not a final performance claim.
+          </p>
+        </div>
+
+        <img src="assets/figures/result.svg" alt="JankBench frame-latency results">
+        <p class="figure-caption">
+          Primary JankBench results. (a) Grouped bars compare five-run median frame latency across
+          mean, p50, p95, and p99; bars within each cluster correspond to the compared schedulers.
+          The dashed red line marks the 16.7 ms deadline over the percentile clusters. (b)
+          Over-deadline frames are shown separately in percent. F-N and F-B denote the named and
+          base builds.
+        </p>
+
+        <img src="assets/figures/ablation.svg" alt="Criticality-path ablation">
+        <p class="figure-caption">
+          Criticality-path ablation. Bars show the three-run median mean, p95, and p99 frame
+          duration for EEVDF, scx_fcp-base, and a build with criticality and inference disabled.
+          Whiskers show the observed min&ndash;max across runs; red dashed lines mark the 16.7 ms
+          deadline in the percentile panels.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="build">
   <div class="container is-max-desktop">
     <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
@@ -205,7 +245,7 @@ sudo ./target/release/scx_fcp -f 16667 -c 2000 -i 3000 -b 6000 -t 850 -s 2</code
   </div>
 </section>
 
-<section class="section" id="repositories">
+<section class="section hero is-light" id="repositories">
   <div class="container is-max-desktop">
     <h2 class="title is-3 has-text-centered">Repositories</h2>
     <div class="columns is-centered">
