@@ -202,6 +202,62 @@
           Whiskers show the observed min&ndash;max across runs; red dashed lines mark the 16.7 ms
           deadline in the percentile panels.
         </p>
+
+        <h3 class="title is-4">Additional measurements</h3>
+        <div class="content has-text-justified">
+          <p>
+            Earlier evaluation snapshot from the development tree, kept for reference alongside the
+            focused results above.
+          </p>
+        </div>
+
+        <div class="columns is-multiline">
+          <div class="column is-half has-text-centered">
+            <img src="assets/figures/eval_jankbench.svg" alt="JankBench frame-latency summaries">
+            <p class="figure-caption">
+              AOSP JankBench frame-latency summaries on 32-vCPU Cuttlefish. Panels (a,b) show
+              aggregate mean and percentiles on the asymmetric and symmetric topologies; panels
+              (c,d) show per-workload p95 for List, Image, and Shadow Grid Fling.
+            </p>
+          </div>
+          <div class="column is-half has-text-centered">
+            <img src="assets/figures/eval_framemetrics.svg" alt="FrameMetrics stage-latency summaries">
+            <p class="figure-caption">
+              AOSP FrameMetrics stage-latency summaries on 32-vCPU Cuttlefish. Panels (a) and (b)
+              show the asymmetric and symmetric configurations; markers are stage-level p95
+              summaries.
+            </p>
+          </div>
+          <div class="column is-half has-text-centered">
+            <img src="assets/figures/eval_physical.svg" alt="Physical device and Cuttlefish latency">
+            <p class="figure-caption">
+              Latency and stage-end CPU samples on the physical ARM64 device and Cuttlefish:
+              physical-device p99 by refresh rate, stage-end shares across Silver, Gold, and Prime
+              cores, and Cuttlefish p99 at 60 and 120 Hz.
+            </p>
+          </div>
+          <div class="column is-half has-text-centered">
+            <img src="assets/figures/eval_pipeline.svg" alt="Synthetic CPU/futex pipeline results">
+            <p class="figure-caption">
+              CPU/futex pipeline with a 90-Hz release target on two Cuttlefish configurations:
+              p99, the fraction above 11.11 ms, and upper-cluster stage-end samples.
+            </p>
+          </div>
+          <div class="column is-half has-text-centered">
+            <img src="assets/figures/eval_uibench.svg" alt="UiBenchJankTests latency">
+            <p class="figure-caption">
+              Frame-weighted latency percentiles from AOSP UiBenchJankTests. The plotted values are
+              reported percentile summaries, not a CDF or a reconstruction of per-frame samples.
+            </p>
+          </div>
+          <div class="column is-half has-text-centered">
+            <img src="assets/figures/eval_overhead.svg" alt="eBPF callback cost">
+            <p class="figure-caption">
+              Measured eBPF callback cost in the reported AOSP workloads. EEVDF is omitted because
+              its scheduling path executes in kernel C rather than through an eBPF callback.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   </div>
