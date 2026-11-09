@@ -8,7 +8,7 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Noto+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Noto+Sans:wght@400;500;700&family=Castoro&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -23,9 +23,9 @@
         <div class="column has-text-centered">
           <div class="brand-mark" aria-hidden="true">FCP</div>
           <p class="publication-venue">MobiSys 2026 &middot; sched_ext &middot; Android UI</p>
-          <h1 class="title is-2 publication-title">
+          <h1 class="subtitle is-3 publication-title">
             Carrying Frame Context Across Sleeps<br>
-            <span class="title-accent">for Android UI Scheduling with sched_ext</span>
+            for Android UI Scheduling with sched_ext
           </h1>
 
           <div class="is-size-5 publication-authors">
@@ -77,10 +77,12 @@
   <div class="container is-max-desktop">
     <div class="hero-body">
       <div class="content has-text-centered">
-        <img src="assets/teaser.svg" alt="Frame context carried from a frame root to synchronous helpers" width="90%">
-        <p class="is-size-6">
-          One frame, one context. A bounded criticality token follows the tasks that a frame root
-          actually wakes.
+        <img src="assets/figures/frame_pipeline.svg"
+             alt="Conceptual frame-time model: scheduled work, runqueue waits, and handoffs">
+        <p class="figure-caption">
+          Conceptual frame-time model underlying the critical-path analysis. Colored bars denote
+          scheduled work, dotted gray intervals denote runqueue waiting, and arrows denote candidate
+          wakeup or IPC handoffs. Horizontal placement is explanatory rather than measured.
         </p>
       </div>
     </div>
@@ -107,8 +109,9 @@
           </p>
           <p class="status-note">
             Evaluation status: the scheduler and measurement harness are being revalidated under a
-            clean host boot and strict run-validity checks. This page will not report a performance
-            claim until the paired comparison passes.
+            clean host boot and strict run-validity checks. The figures below are copied from the
+            current paper draft and remain preliminary; this page does not yet make a final
+            performance claim.
           </p>
         </div>
       </div>
@@ -124,8 +127,23 @@
         <div class="content has-text-justified">
           <p>
             Frame context is created at the root, carried across a sleep, and used by placement.
-            No framework or application changes are required.
+            No framework or application changes are required. The policy has three stages: identify
+            candidate frame roots, propagate bounded criticality across eligible wakeups, and
+            schedule token holders using frame-relative urgency and estimated service demand.
           </p>
+        </div>
+
+        <img src="assets/figures/scxfcp_architecture.svg"
+             alt="scx_fcp mechanism overview">
+        <p class="figure-caption">
+          Mechanism overview from the revised scheduler. Candidate-root evidence seeds a bounded
+          token that propagates on eligible wakeups; a same-thread-group edge is shown as a dashed
+          proxy, not a verified dependency. Remaining slack and an EWMA of scheduled run intervals
+          determine urgency and requested CPU capacity (clipped to [1,1024]). The EWMA is not a
+          direct estimate of future work; wakeup and capacity inferences remain heuristic.
+        </p>
+
+        <div class="content has-text-justified">
           <ul>
             <li>
               <strong>Infer the root.</strong> Period, jitter, duty cycle, and peer-wake evidence
@@ -157,26 +175,95 @@
         <div class="content has-text-justified">
           <p>
             We evaluate on Android 17 Cuttlefish (Linux 6.18, 16 vCPU) with AOSP JankBench and
-            UiBench. The primary comparison separates the frame-latency result from the BPF runtime
-            cost of each sched_ext policy.
+            UiBench, plus a physical ARM64 device and a synthetic CPU/futex pipeline. The primary
+            comparison separates the frame-latency result from the BPF runtime cost of each
+            sched_ext policy.
           </p>
           <ul>
             <li><strong>Latency:</strong> frame-duration mean, median, p95, p99, and over-deadline jank.</li>
             <li><strong>Cost:</strong> BPF <code>ns/call</code>, total BPF CPU seconds, and &micro;s per frame from a separate <code>bpf_stats</code> block.</li>
             <li><strong>Validity:</strong> host CPU, guest load, boot ID, SystemUI state, frame count, and scheduler state are recorded per run.</li>
           </ul>
-          <p class="status-note">
-            The current public table is intentionally withheld while the warm-up protocol, binary
-            provenance, and host-interference gates are being corrected. Preliminary numbers are not
-            final claims.
-          </p>
         </div>
+
+        <img src="assets/figures/eval_jankbench.svg"
+             alt="JankBench frame-latency summaries">
+        <p class="figure-caption">
+          AOSP JankBench frame-latency summaries on 32-vCPU Cuttlefish. Panels (a,b) show aggregate
+          mean and percentiles on the asymmetric and symmetric topologies; panels (c,d) show
+          per-workload p95 for List, Image, and Shadow Grid Fling. Points are reported summary
+          statistics, not per-frame distributions.
+        </p>
+
+        <img src="assets/figures/eval_framemetrics.svg"
+             alt="FrameMetrics stage-latency summaries">
+        <p class="figure-caption">
+          AOSP FrameMetrics stage-latency summaries on 32-vCPU Cuttlefish. Panels (a) and (b) show
+          the asymmetric and symmetric configurations; the legend applies to both. Each panel uses
+          a logarithmic y-axis. Markers are stage-level p95 summaries, and connecting lines do not
+          represent per-frame distributions.
+        </p>
+
+        <img src="assets/figures/eval_physical.svg"
+             alt="Physical device and Cuttlefish latency">
+        <p class="figure-caption">
+          Latency and stage-end CPU samples on the physical ARM64 device and Cuttlefish. (a)
+          Physical-device p99 by refresh rate; (b) stage-end shares across Silver, Gold, and Prime
+          cores for named (N) and zero-hint (Z) modes; (c,d) Cuttlefish p99 and high-capacity stage
+          samples at 60 and 120 Hz.
+        </p>
+
+        <img src="assets/figures/eval_pipeline.svg"
+             alt="Synthetic CPU/futex pipeline results">
+        <p class="figure-caption">
+          CPU/futex pipeline with a 90-Hz release target on two Cuttlefish configurations. The
+          legend applies across the panels, which show p99, the fraction above 11.11 ms, and
+          upper-cluster stage-end samples. The scheduler uses a 60-Hz frame budget; these are not
+          end-to-end display-deadline or time-weighted residency measurements.
+        </p>
+
+        <p class="status-note">
+          The current public table is intentionally withheld while the warm-up protocol, binary
+          provenance, and host-interference gates are being corrected. Preliminary numbers are not
+          final claims.
+        </p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="section" id="artifact">
+<section class="section" id="more-results">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Additional Measurements</h2>
+    <div class="columns is-multiline">
+      <div class="column is-half has-text-centered">
+        <img src="assets/figures/eval_uibench.svg" alt="UiBenchJankTests latency">
+        <p class="figure-caption">
+          Frame-weighted latency percentiles from AOSP UiBenchJankTests. The plotted values are
+          reported percentile summaries, not a CDF or a reconstruction of per-frame samples.
+        </p>
+      </div>
+      <div class="column is-half has-text-centered">
+        <img src="assets/figures/eval_ablation.svg" alt="Ablation results">
+        <p class="figure-caption">
+          Two configuration comparisons on the asymmetric 32-vCPU testbed. &ldquo;No cluster
+          steering&rdquo; and &ldquo;20-ms slice&rdquo; alter scheduler settings; they do not
+          isolate individual mechanisms.
+        </p>
+      </div>
+      <div class="column is-half has-text-centered">
+        <img src="assets/figures/eval_overhead.svg" alt="eBPF callback cost">
+        <p class="figure-caption">
+          Measured eBPF callback cost in the reported AOSP workloads. The synthetic CPU/futex
+          pipeline is omitted; its tabled callback cost is substantially higher. EEVDF is omitted
+          because its scheduling path executes in kernel C rather than through an eBPF callback.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section hero is-light" id="artifact">
   <div class="container is-max-desktop has-text-centered">
     <h2 class="title is-3">Artifact</h2>
     <div class="content has-text-justified">

@@ -58,49 +58,57 @@ body {
   margin-top: 0.75rem;
 }
 
-/* scx_fcp page additions */
+/* scx_fcp additions */
+
+img {
+  max-width: 100%;
+  height: auto;
+}
 
 .brand-mark {
-  width: 3.25rem;
-  height: 3.25rem;
-  margin: 0 auto 1rem;
+  width: 3rem;
+  height: 3rem;
+  margin: 0 auto 0.9rem;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: linear-gradient(145deg, #14213d, #08519c);
+  background: #363636;
   color: #fff;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.04em;
-  box-shadow: 0 10px 24px rgba(8, 81, 156, 0.22);
 }
 
-.title-accent {
-  color: #08519c;
+.figure-caption {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #555;
+  margin: 0.6rem 0 2rem;
+  text-align: left;
 }
 
 .status-note {
-  border-left: 3px solid #08519c;
-  background: #eef5fd;
-  color: #26466d;
+  border-left: 3px solid #363636;
+  background: #fafafa;
+  color: #4a4a4a;
   padding: 0.8rem 1rem;
   border-radius: 0.25rem;
   font-size: 0.95rem;
 }
 
 code {
-  background: #f0f0f0;
-  color: #173b66;
+  background: #f5f5f5;
+  color: #da1039;
   border-radius: 0.2rem;
   padding: 0.08rem 0.28rem;
 }
 
 pre {
   background: #f5f5f5;
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 1rem;
   overflow-x: auto;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 
 pre code {
