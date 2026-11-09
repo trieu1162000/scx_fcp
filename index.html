@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="description" content="Carrying Frame Context Across Sleeps: Android UI scheduling with sched_ext">
+  <meta name="description" content="scx_fcp: frame-critical scheduling for Android UI pipelines with sched_ext">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Carrying Frame Context Across Sleeps</title>
+  <title>scx_fcp: Frame-Critical Scheduling for Android UI</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,40 +22,35 @@
       <div class="columns is-centered">
         <div class="column has-text-centered">
           <div class="brand-mark" aria-hidden="true">FCP</div>
-          <p class="publication-venue">MobiSys 2026 &middot; sched_ext &middot; Android UI</p>
+          <p class="publication-venue">sched_ext &middot; Android UI &middot; research prototype</p>
           <h1 class="subtitle is-3 publication-title">
-            Carrying Frame Context Across Sleeps<br>
-            for Android UI Scheduling with sched_ext
+            scx_fcp<br>
+            Frame-Critical Scheduling for Android UI Pipelines
           </h1>
 
-          <div class="is-size-5 publication-authors">
-            <span class="author-block">Anonymous Author(s)<sup>1</sup></span>
-          </div>
-          <div class="is-size-5 publication-authors">
-            <span class="author-block"><sup>1</sup>Anonymous Institution</span>
-          </div>
-          <p class="is-size-6 has-text-grey publication-note">
-            Paper under review &middot; artifact and evaluation in progress
+          <p class="project-tagline">
+            A loadable <code>sched_ext</code> policy that carries frame context across sleeps
+            and schedules the tasks a frame actually depends on.
           </p>
 
           <div class="column has-text-centered">
             <div class="publication-links">
               <span class="link-block">
-                <a href="#abstract" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-book-open"></i></span>
-                  <span>Abstract</span>
+                <a href="#overview" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-circle-info"></i></span>
+                  <span>Overview</span>
                 </a>
               </span>
               <span class="link-block">
-                <a href="#method" class="external-link button is-normal is-rounded is-dark">
+                <a href="#how" class="external-link button is-normal is-rounded is-dark">
                   <span class="icon"><i class="fas fa-diagram-project"></i></span>
-                  <span>Method</span>
+                  <span>How it works</span>
                 </a>
               </span>
               <span class="link-block">
-                <a href="#evaluation" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-chart-line"></i></span>
-                  <span>Evaluation</span>
+                <a href="#build" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-terminal"></i></span>
+                  <span>Build &amp; run</span>
                 </a>
               </span>
               <span class="link-block">
@@ -80,38 +75,42 @@
         <img src="assets/figures/frame_pipeline.svg"
              alt="Conceptual frame-time model: scheduled work, runqueue waits, and handoffs">
         <p class="figure-caption">
-          Conceptual frame-time model underlying the critical-path analysis. Colored bars denote
-          scheduled work, dotted gray intervals denote runqueue waiting, and arrows denote candidate
-          wakeup or IPC handoffs. Horizontal placement is explanatory rather than measured.
+          Conceptual frame-time model: colored bars denote scheduled work, dotted gray intervals
+          denote runqueue waiting, and arrows denote candidate wakeup or IPC handoffs. The frame
+          deadline is met only if waiting, service time, and inter-stage handoff delays fit within
+          the frame budget. Horizontal placement is explanatory, not measured.
         </p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="section hero is-light" id="abstract">
+<section class="section hero is-light" id="overview">
   <div class="container is-max-desktop">
     <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
-        <h2 class="title is-3">Abstract</h2>
+        <h2 class="title is-3">Overview</h2>
         <div class="content has-text-justified">
+          <p>
+            <strong>scx_fcp</strong> is a frame critical-path and thermal-debt scheduler for
+            heterogeneous Android and automotive SoCs. It targets VSYNC-driven display pipelines
+            &mdash; input, UI thread, render thread, SurfaceFlinger, and HWC &mdash; on
+            <code>big.LITTLE</code> and tri-cluster (LITTLE / Big / Prime) systems.
+          </p>
           <p>
             Android frames are chains of short-lived tasks that sleep and wake across process
             boundaries. A per-task scheduler sees each wakeup independently, while the frame root
-            and the helpers it depends on disappear between scheduler callbacks.
+            and the helpers it depends on disappear between scheduler callbacks. scx_fcp keeps a
+            bounded notion of that context in BPF and uses it for placement, without framework or
+            application changes.
           </p>
           <p>
-            <strong>scx_fcp</strong> carries frame context across sleeps in a loadable
-            <code>sched_ext</code> policy. It infers a frame root from wakeup behavior and propagates
-            a bounded criticality token along synchronous and same-thread-group edges. The token
-            expires at the frame budget and stops at a small depth, so a false root cannot mark an
-            unbounded task set.
+            All scheduling decisions execute in BPF. The userspace daemon discovers per-CPU
+            capacity, populates BPF maps and rodata, and reports telemetry.
           </p>
           <p class="status-note">
-            Evaluation status: the scheduler and measurement harness are being revalidated under a
-            clean host boot and strict run-validity checks. The figures below are copied from the
-            current paper draft and remain preliminary; this page does not yet make a final
-            performance claim.
+            Status: experimental research prototype. Options and telemetry may change, and the
+            project does not make a performance claim on this page.
           </p>
         </div>
       </div>
@@ -119,46 +118,46 @@
   </div>
 </section>
 
-<section class="section" id="method">
+<section class="section" id="how">
   <div class="container is-max-desktop">
     <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
-        <h2 class="title is-3">Method Overview</h2>
+        <h2 class="title is-3">How it works</h2>
         <div class="content has-text-justified">
           <p>
-            Frame context is created at the root, carried across a sleep, and used by placement.
-            No framework or application changes are required. The policy has three stages: identify
-            candidate frame roots, propagate bounded criticality across eligible wakeups, and
-            schedule token holders using frame-relative urgency and estimated service demand.
+            The policy combines three mechanisms: bounded criticality propagation, burst-window
+            utilization, and thermal-aware core selection.
           </p>
         </div>
 
         <img src="assets/figures/scxfcp_architecture.svg"
              alt="scx_fcp mechanism overview">
         <p class="figure-caption">
-          Mechanism overview from the revised scheduler. Candidate-root evidence seeds a bounded
-          token that propagates on eligible wakeups; a same-thread-group edge is shown as a dashed
-          proxy, not a verified dependency. Remaining slack and an EWMA of scheduled run intervals
-          determine urgency and requested CPU capacity (clipped to [1,1024]). The EWMA is not a
-          direct estimate of future work; wakeup and capacity inferences remain heuristic.
+          Mechanism overview. Candidate-root evidence seeds a bounded token that propagates on
+          eligible wakeups; a same-thread-group edge is a dashed proxy, not a verified dependency.
+          Remaining slack and an EWMA of scheduled run intervals determine urgency and requested
+          CPU capacity (clipped to [1,1024]). The EWMA is not a direct estimate of future work;
+          wakeup and capacity inferences remain heuristic.
         </p>
 
         <div class="content has-text-justified">
           <ul>
             <li>
-              <strong>Infer the root.</strong> Period, jitter, duty cycle, and peer-wake evidence
-              identify a frame root from ordinary wakeup behavior. An optional named hint can be
-              used as a control.
+              <strong>Frame critical-path token (FCP-Token).</strong> Frame roots receive a
+              generation-stamped token with a bounded hop depth and a frame-budget TTL. The token
+              follows synchronous wakeups and tight same-thread-group edges, so a helper woken by
+              a UI stage inherits the frame context instead of being treated as an unrelated task.
             </li>
             <li>
-              <strong>Carry the token.</strong> A bounded token follows synchronous and tight
-              same-TGID wakeups. Depth and frame-budget expiry prevent an accidental root from
-              spreading indefinitely.
+              <strong>Dual-timescale burst-window utilization (DT-BWU).</strong> A 4&nbsp;ms
+              sub-frame burst window runs alongside the 32&nbsp;ms PELT EWMA. The effective demand
+              is the maximum of the two, preserving active-phase demand across VSYNC sleep gaps.
             </li>
             <li>
-              <strong>Act on context.</strong> Token holders prefer idle high-capacity CPUs and
-              enter the critical queue when the high-capacity cluster is busy. Placement remains
-              subordinate to the carried context.
+              <strong>Predictive thermal-debt core selection (PTD-EAS).</strong> Each CPU tracks an
+              exponentially decaying thermal debt. High-demand tasks prefer idle big or Prime cores
+              whose debt is below the configured cap; otherwise they spill to cooler cores. A
+              bounded rescue rule prevents background starvation.
             </li>
           </ul>
         </div>
@@ -167,129 +166,69 @@
   </div>
 </section>
 
-<section class="section hero is-light" id="evaluation">
+<section class="section hero is-light" id="build">
   <div class="container is-max-desktop">
     <div class="columns is-centered has-text-centered">
       <div class="column is-four-fifths">
-        <h2 class="title is-3">Evaluation</h2>
+        <h2 class="title is-3">Build &amp; run</h2>
         <div class="content has-text-justified">
           <p>
-            We evaluate on Android 17 Cuttlefish (Linux 6.18, 16 vCPU) with AOSP JankBench and
-            UiBench, plus a physical ARM64 device and a synthetic CPU/futex pipeline. The primary
-            comparison separates the frame-latency result from the BPF runtime cost of each
-            sched_ext policy.
+            The scheduler is part of the scx workspace and builds with Cargo. It runs on any kernel
+            with sched_ext and BTF; the Android 6.1 backport lives in a separate repository.
           </p>
+          <pre><code># Build the scheduler
+cargo build --release -p scx_fcp
+
+# Attach at 60 Hz (16667 us frame budget), 2 s telemetry
+sudo ./target/release/scx_fcp -f 16667 -c 2000 -i 3000 -b 6000 -t 850 -s 2</code></pre>
+          <p>Kernel requirements:</p>
           <ul>
-            <li><strong>Latency:</strong> frame-duration mean, median, p95, p99, and over-deadline jank.</li>
-            <li><strong>Cost:</strong> BPF <code>ns/call</code>, total BPF CPU seconds, and &micro;s per frame from a separate <code>bpf_stats</code> block.</li>
-            <li><strong>Validity:</strong> host CPU, guest load, boot ID, SystemUI state, frame count, and scheduler state are recorded per run.</li>
+            <li><code>CONFIG_SCHED_CLASS_EXT=y</code></li>
+            <li><code>CONFIG_DEBUG_INFO_BTF=y</code></li>
+            <li>
+              <code>CONFIG_SCHED_PROXY_EXEC=n</code> on Android GKI kernels that carry Proxy
+              Execution; it conflicts with sched_ext dispatch queues.
+            </li>
+            <li>
+              <code>CONFIG_FUNCTION_TRACER</code> is optional: scx_fcp attaches purely through
+              <code>bpf_struct_ops</code>.
+            </li>
           </ul>
+          <p>
+            Full setup, cross-compilation, Android bundle packaging, and benchmark instructions are
+            in the repository's <code>SETUP.md</code>.
+          </p>
         </div>
-
-        <img src="assets/figures/eval_jankbench.svg"
-             alt="JankBench frame-latency summaries">
-        <p class="figure-caption">
-          AOSP JankBench frame-latency summaries on 32-vCPU Cuttlefish. Panels (a,b) show aggregate
-          mean and percentiles on the asymmetric and symmetric topologies; panels (c,d) show
-          per-workload p95 for List, Image, and Shadow Grid Fling. Points are reported summary
-          statistics, not per-frame distributions.
-        </p>
-
-        <img src="assets/figures/eval_framemetrics.svg"
-             alt="FrameMetrics stage-latency summaries">
-        <p class="figure-caption">
-          AOSP FrameMetrics stage-latency summaries on 32-vCPU Cuttlefish. Panels (a) and (b) show
-          the asymmetric and symmetric configurations; the legend applies to both. Each panel uses
-          a logarithmic y-axis. Markers are stage-level p95 summaries, and connecting lines do not
-          represent per-frame distributions.
-        </p>
-
-        <img src="assets/figures/eval_physical.svg"
-             alt="Physical device and Cuttlefish latency">
-        <p class="figure-caption">
-          Latency and stage-end CPU samples on the physical ARM64 device and Cuttlefish. (a)
-          Physical-device p99 by refresh rate; (b) stage-end shares across Silver, Gold, and Prime
-          cores for named (N) and zero-hint (Z) modes; (c,d) Cuttlefish p99 and high-capacity stage
-          samples at 60 and 120 Hz.
-        </p>
-
-        <img src="assets/figures/eval_pipeline.svg"
-             alt="Synthetic CPU/futex pipeline results">
-        <p class="figure-caption">
-          CPU/futex pipeline with a 90-Hz release target on two Cuttlefish configurations. The
-          legend applies across the panels, which show p99, the fraction above 11.11 ms, and
-          upper-cluster stage-end samples. The scheduler uses a 60-Hz frame budget; these are not
-          end-to-end display-deadline or time-weighted residency measurements.
-        </p>
-
-        <p class="status-note">
-          The current public table is intentionally withheld while the warm-up protocol, binary
-          provenance, and host-interference gates are being corrected. Preliminary numbers are not
-          final claims.
-        </p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="section" id="more-results">
+<section class="section" id="repositories">
   <div class="container is-max-desktop">
-    <h2 class="title is-3 has-text-centered">Additional Measurements</h2>
-    <div class="columns is-multiline">
+    <h2 class="title is-3 has-text-centered">Repositories</h2>
+    <div class="columns is-centered">
       <div class="column is-half has-text-centered">
-        <img src="assets/figures/eval_uibench.svg" alt="UiBenchJankTests latency">
-        <p class="figure-caption">
-          Frame-weighted latency percentiles from AOSP UiBenchJankTests. The plotted values are
-          reported percentile summaries, not a CDF or a reconstruction of per-frame samples.
+        <a class="button is-medium is-link is-rounded" href="https://github.com/trieu1162000/scx_fcp"
+           target="_blank" rel="noopener">
+          <span class="icon"><i class="fab fa-github"></i></span>
+          <span>scx_fcp</span>
+        </a>
+        <p class="figure-caption has-text-centered">
+          Scheduler source, setup guide, and benchmark harness.
         </p>
       </div>
       <div class="column is-half has-text-centered">
-        <img src="assets/figures/eval_ablation.svg" alt="Ablation results">
-        <p class="figure-caption">
-          Two configuration comparisons on the asymmetric 32-vCPU testbed. &ldquo;No cluster
-          steering&rdquo; and &ldquo;20-ms slice&rdquo; alter scheduler settings; they do not
-          isolate individual mechanisms.
-        </p>
-      </div>
-      <div class="column is-half has-text-centered">
-        <img src="assets/figures/eval_overhead.svg" alt="eBPF callback cost">
-        <p class="figure-caption">
-          Measured eBPF callback cost in the reported AOSP workloads. The synthetic CPU/futex
-          pipeline is omitted; its tabled callback cost is substantially higher. EEVDF is omitted
-          because its scheduling path executes in kernel C rather than through an eBPF callback.
+        <a class="button is-medium is-link is-rounded" href="https://github.com/trieu1162000/scx-6.1"
+           target="_blank" rel="noopener">
+          <span class="icon"><i class="fab fa-github"></i></span>
+          <span>scx-6.1</span>
+        </a>
+        <p class="figure-caption has-text-centered">
+          Android 6.1 sched_ext backport with the scx_lavd, scx_p2dq, and scx_fcp builds.
         </p>
       </div>
     </div>
-  </div>
-</section>
-
-<section class="section hero is-light" id="artifact">
-  <div class="container is-max-desktop has-text-centered">
-    <h2 class="title is-3">Artifact</h2>
-    <div class="content has-text-justified">
-      <p>
-        The scheduler, harnesses, and reproduction guide are being prepared as a separate
-        artifact. The policy is loadable on a stock sched_ext kernel; the Android 6.1 backport is
-        documented separately and is not mixed with the mainline results.
-      </p>
-    </div>
-    <a class="button is-medium is-link is-rounded" href="https://github.com/trieu1162000/scx_fcp"
-       target="_blank" rel="noopener">
-      <span class="icon"><i class="fab fa-github"></i></span>
-      <span>View source</span>
-    </a>
-  </div>
-</section>
-
-<section class="section" id="bibtex">
-  <div class="container is-max-desktop">
-    <h2 class="title is-3">BibTeX</h2>
-    <pre><code>@inproceedings{scxfcp2026,
-  title     = {Carrying Frame Context Across Sleeps for Android UI Scheduling with sched\_ext},
-  author    = {Anonymous},
-  booktitle = {ACM International Conference on Mobile Systems, Applications, and Services (MobiSys)},
-  year      = {2026}
-}</code></pre>
   </div>
 </section>
 

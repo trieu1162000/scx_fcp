@@ -58,6 +58,14 @@ body {
   margin-top: 0.75rem;
 }
 
+.project-tagline {
+  max-width: 46rem;
+  margin: 0.5rem auto 1rem;
+  color: #4a4a4a;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
 /* scx_fcp additions */
 
 img {
