@@ -27,9 +27,7 @@ Recommended: copy this directory to the root of a dedicated `gh-pages` branch
 or to the repository's `/docs` directory, then enable Pages from that
 branch/folder.
 
-The page is intentionally a **draft**. It does not publish the old five-run
-numbers or the invalid BPF rows. Replace the evaluation section only after the
-paired/core-paper results are frozen.
+The page is intentionally a **draft**.
 
 ## Files
 
