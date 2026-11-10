@@ -75,6 +75,55 @@ SELinux: Permissive (lab image workaround)
 also waits for `activity`, `system_server`, and SystemUI, and restarts zygote
 once if the activity service is dead.
 
+## 1a. vCPU configurations (4/8/16/32)
+
+Use the parameterized launcher rather than editing the old lab script:
+
+```bash
+export CF_HOME=/path/to/cuttlefish
+export KERNEL=/path/to/bzImage
+export INITRAMFS=/path/to/initramfs.img
+export SERIAL=0.0.0.0:6520
+
+# 4 vCPU
+CPUS=4 MEMORY_MB=4096 \
+  bash artifact/scripts/launch_cuttlefish.sh
+
+# 8 vCPU
+CPUS=8 MEMORY_MB=6144 \
+  bash artifact/scripts/launch_cuttlefish.sh
+
+# 16 vCPU (paper configuration)
+CPUS=16 MEMORY_MB=6144 \
+  bash artifact/scripts/launch_cuttlefish.sh
+
+# 32 vCPU (functional/topology runs only on this host)
+CPUS=32 MEMORY_MB=8192 \
+  bash artifact/scripts/launch_cuttlefish.sh
+```
+
+The launcher passes `-cpus=N -memory_mb=M` to `launch_cvd` and waits for adb.
+
+Host rules:
+
+```text
+4/8 vCPU   smoke and scaling experiments; host can stay valid
+16 vCPU    paper configuration; requires at least 16 host threads
+32 vCPU    requires >=32 host threads; on the current 8C/16T host it is
+           oversubscribed and its performance numbers are not valid
+```
+
+The current strict full-matrix validator expects:
+
+```text
+nproc = 16
+```
+
+So only 16-vCPU runs are the paper matrix. A 4/8/32-vCPU launch is useful for
+functional checks or scaling, but the validator/expected-output contract must
+be updated before treating those numbers as paper results. Do not mix vCPU
+counts in one comparison.
+
 ## 2. Push the frozen binaries and APKs
 
 The full-matrix driver performs the freeze check and pushes the scheduler
