@@ -3,10 +3,6 @@
 This is the short end-to-end sequence. Detailed prerequisites, APK builds, and
 troubleshooting are in [`BUILD.md`](BUILD.md) and [`RUN.md`](RUN.md).
 
-> The implementation scripts are not included in this docs-only branch yet.
-> Stage them into `artifact/scripts/` at artifact freeze before running the
-> commands below. See [`scripts/README.md`](scripts/README.md).
-
 ## 1. Build
 
 ```bash
