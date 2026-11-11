@@ -25,8 +25,12 @@ tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"
 
 ## 2. Use the image as-is
 
-The image contains its kernel and ramdisk. Launch Cuttlefish with the image
-directory:
+The image contains its kernel and ramdisk. Rebuilding that kernel after
+changing Kconfig options produces a custom kernel; use the matching ramdisk
+for that kernel. If you do not rebuild the kernel, no custom-kernel step is
+needed.
+
+Launch Cuttlefish with the image directory:
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
