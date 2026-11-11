@@ -1,5 +1,30 @@
 # Setup and reproduction pipeline
 
+## Quick start
+
+```bash
+cd /path/to/scx_fcp
+export SCX_ROOT=/path/to/scx
+
+./artifact/pipeline.sh build
+
+# Put the workload APKs in artifact/workloads/.
+export CF_HOME=/path/to/cuttlefish
+export KERNEL=/path/to/bzImage
+export INITRAMFS=/path/to/initramfs
+export SERIAL=0.0.0.0:6520
+
+./artifact/pipeline.sh launch
+./artifact/pipeline.sh smoke
+./artifact/pipeline.sh full --out results/full14
+./artifact/pipeline.sh analyze results/full14 \
+  --out-dir results/full14/integration
+```
+
+The sections below document the same sequence in detail.
+
+## Overview
+
 This document takes a clean Cuttlefish host from a booted Android 17 image to
 the full 14-test paper matrix and paper tables.
 
