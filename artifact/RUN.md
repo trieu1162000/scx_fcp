@@ -43,7 +43,80 @@ build | launch | smoke | full | resume | analyze
 The per-benchmark adapters stay under `artifact/scripts/internal/`; they are
 not part of the user-facing interface.
 
-## 1. Cuttlefish prerequisites
+## 1. Get or build the Cuttlefish image and kernel
+
+### Option A: prebuilt Android image
+
+Download the matching `aosp_cf_x86_64_only_phone` image and
+`cvd-host_package.tar.gz` from the Android build/CI source used by your lab.
+Extract the host package:
+
+```bash
+export CF_HOME=/path/to/cuttlefish
+mkdir -p "$CF_HOME"
+tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"
+```
+
+The system image directory contains `system.img`, `vendor_boot.img`, and the
+other Cuttlefish images. Use that directory as `CF_HOME` for launch.
+
+### Option B: build AOSP Cuttlefish
+
+```bash
+mkdir -p "$HOME/aosp"
+cd "$HOME/aosp"
+repo init -u https://android.googlesource.com/platform/manifest \
+  -b android-latest-release
+repo sync -j"$(nproc)"
+source build/envsetup.sh
+lunch aosp_cf_x86_64_only_phone-userdebug
+m -j"$(nproc)"
+```
+
+The host tools and image are under:
+
+```text
+out/target/product/vsoc_x86_64_only/
+  cvd-host_package.tar.gz
+  system.img
+  vendor_boot.img
+  ...
+```
+
+### Kernel
+
+Use a Linux 6.18 kernel with:
+
+```text
+CONFIG_SCHED_CLASS_EXT=y
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_BPF=y
+CONFIG_BPF_SYSCALL=y
+CONFIG_BPF_JIT=y
+# CONFIG_SCHED_PROXY_EXEC is not set
+```
+
+The kernel source is the Android common kernel:
+
+```bash
+git clone https://android.googlesource.com/kernel/common
+cd common
+# select the 6.18 branch/tag required by the image
+# configure the required options above
+make -j"$(nproc)" bzImage
+```
+
+The output is `arch/x86/boot/bzImage`; export it as `KERNEL`.
+
+If using a prebuilt image, use its matching kernel instead of rebuilding.
+
+### Initramfs
+
+Use the `initramfs.img` generated with the image, or repack the matching vendor
+ramdisk when the 6.18 kernel needs different modules. Set the resulting file as
+`INITRAMFS`.
+
+## 2. Cuttlefish prerequisites
 
 Required:
 
@@ -104,7 +177,7 @@ SELinux: Permissive
 also waits for `activity`, `system_server`, and SystemUI, and restarts zygote
 once if the activity service is dead.
 
-## 1a. vCPU configurations (4/8/16/32)
+## 3. vCPU configurations (4/8/16/32)
 
 Use the parameterized launcher:
 
@@ -153,7 +226,7 @@ functional checks or scaling, but the validator/expected-output contract must
 be updated before treating those numbers as paper results. Do not mix vCPU
 counts in one comparison.
 
-## 2. Push the frozen binaries and APKs
+## 4. Push the frozen binaries and APKs
 
 The full-matrix driver pushes the scheduler binaries. Required files are in
 `BUILD.md`.
@@ -179,7 +252,7 @@ The scheduler binary is:
 artifact/build/bin/scx_fcp_behavioral
 ```
 
-## 3. Smoke test
+## 5. Smoke test
 
 Run the smallest useful cell first:
 
@@ -198,7 +271,7 @@ cat "$OUT/jankbench/list-view-fling/validity.json"
 
 Do not start the full campaign until this cell is valid.
 
-## 4. Full matrix
+## 6. Full matrix
 
 From the repository root:
 
@@ -257,7 +330,7 @@ logcat event.
 Invalid attempts are moved to `_invalid/` and rerun. They remain visible in
 validity logs; they are never pooled.
 
-## 5. Aggregate and check expected results
+## 7. Aggregate and check expected results
 
 From the artifact root:
 
@@ -289,7 +362,7 @@ full14_website.html
 
 If the strict command exits nonzero, the matrix is not a paper result.
 
-## 6. Runtime and space
+## 8. Runtime and space
 
 Approximate runtime:
 
@@ -302,7 +375,7 @@ Raw data:  tens of GB depending on retained logcat/gfxinfo databases
 Plan for an overnight campaign and keep raw data. Do not delete invalid or
 failed runs from the archive; they are part of the validity record.
 
-## 7. Cleanup
+## 9. Cleanup
 
 Stop schedulers and the device:
 
@@ -314,7 +387,7 @@ CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
 HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd"
 ```
 
-## 8. Known limitations
+## 10. Known limitations
 
 - UiBench `bitmap-upload` requires the fixed app APK; the frozen AOSP app
   crashes before the first frame.
