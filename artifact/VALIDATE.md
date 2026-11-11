@@ -1,39 +1,27 @@
 # Validation and aggregation
 
-This is the fail-fast contract for the matrix. A result is not a paper result
-until every required cell is valid.
-
-## 1. Smoke gate
-
-Run before the full matrix:
+## 1. Smoke test
 
 ```bash
-# one JankBench benchmark id, one policy pair
-run_full_matrix.sh --out results/smoke --jank-tests 0 --skip-uibench --runs 1
-
-# one UiBench test, one policy pair
-run_full_matrix.sh --out results/smoke-ui --skip-jank --ui-tests inflating-list --runs 1
+artifact/pipeline.sh smoke
 ```
 
-Accept the smoke only if:
+Smoke output is accepted only when:
 
 ```text
 state before/after is recorded
 scheduler hash matches the freeze
-expected benchmark/test name matches
+benchmark/test name matches
 frames > 0
 no fatal logcat event
 ```
 
-Stop immediately on a smoke failure. Do not run the full matrix hoping it
-recovers.
+## 2. JankBench checks
 
-## 2. JankBench validity
-
-Every JankBench run must pass the evaluable J1-J12 checks:
+Every JankBench run is checked against J1-J12:
 
 ```text
-J1   required files + consistency
+J1   required files and consistency
 J2   policy/run/benchmark id/name/run_count
 J3   frame counts, iterations, DB/summary agreement
 J4   kernel, 16 vCPU, SDK, build, SELinux
@@ -47,12 +35,11 @@ J11  bpf_stats disabled for timing
 J12  freeze manifest
 ```
 
-A failed run is moved to `_invalid/` and retried. It is never silently dropped
-or averaged into the valid cell.
+Failed runs are stored under `_invalid/` and are excluded from aggregation.
 
-## 3. UiBench validity
+## 3. UiBench checks
 
-Every UiBench test/rep row must pass:
+Every UiBench test/rep row is checked for:
 
 ```text
 instrumentation ends OK (1 test)
@@ -68,37 +55,30 @@ device Awake
 no ANR/fatal/LMK/SystemUI death in logcat
 ```
 
-A block is accepted only when all required tests have exactly the requested
-repetitions and no invalid row. Invalid blocks are archived and rerun.
+A test block is accepted only when all requested tests and repetitions are
+present.
 
-## 4. Aggregation gate
+## 4. Aggregation
 
 ```bash
-python3 scripts/integrate_full14.py <campaign-root> \
-  --runs 10 --require-known-invalid --out-dir <campaign-root>/integration
+artifact/pipeline.sh analyze <campaign-root> \
+  --runs 10 --require-known-invalid \
+  --out-dir <campaign-root>/integration
 ```
 
-Required:
+Expected matrix:
 
 ```text
 14 tests
 4 policies
-56/56 cells
-10 valid units per cell
+56 cells
+10 accepted runs/repetitions per cell
 ```
 
-The aggregator must reject:
+The aggregator rejects stale validity files, hash/freeze mismatches,
+duplicate repetitions, missing metrics, partial cells, and invalid runs.
 
-```text
-stale validity.json
-freeze/hash mismatch
-duplicate repetitions
-missing metrics
-partial cells
-invalid runs
-```
-
-## 5. Expected outputs
+## 5. Outputs
 
 ```text
 full14_summary.json
@@ -107,16 +87,4 @@ full14_jankbench.tex
 full14_uibench.tex
 full14_website.html
 validity.json / validity.csv
-```
-
-Any nonzero exit is a failed evaluation, not a paper result.
-
-## 6. Stop/go rule
-
-```text
-smoke FAIL      -> stop
-one invalid     -> archive + retry
-cell incomplete -> stop/retry, never invent
-56/56 valid     -> paper tables
-otherwise       -> report incomplete, no claim
 ```

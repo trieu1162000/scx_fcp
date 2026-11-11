@@ -3,15 +3,20 @@
 This document takes a clean Cuttlefish host from a booted Android 17 image to
 the full 14-test paper matrix and paper tables.
 
-The current driver is:
+The public entrypoint is:
 
 ```text
-artifact/scripts/run_full_matrix_14.sh
+artifact/pipeline.sh
 ```
 
-It performs per-run validity checks and reruns invalid measurements. Do not
-replace it with the old `artifact/run_matrix.sh`, which implements the retired
-five-policy/three-ID protocol.
+It exposes one compact interface:
+
+```text
+build | launch | smoke | full | resume | analyze
+```
+
+The per-benchmark adapters stay under `artifact/scripts/internal/`; they are
+not part of the user-facing interface.
 
 ## 1. Cuttlefish prerequisites
 
@@ -165,9 +170,7 @@ Run the smallest useful cell first:
 ```bash
 cd artifact
 SERIAL=0.0.0.0:6520 ADB=$HOME/bin/adb \
-OUT=$PWD/results/smoke \
-  bash scripts/run_full_matrix_14.sh \
-    --out "$OUT" --runs 1 --jank-tests 0 --skip-uibench
+  ./pipeline.sh smoke
 ```
 
 Check:
@@ -195,7 +198,7 @@ export OUT=$PWD/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)
 export UI_ALLOW_INVALID=none
 
 RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
-  bash scripts/run_full_matrix_14.sh --out "$OUT"
+  ./pipeline.sh full --out "$OUT"
 ```
 
 Defaults:
@@ -217,7 +220,7 @@ would restore `bitmap-upload`.)
 The driver supports cell-level resume:
 
 ```bash
-bash scripts/run_full_matrix_14.sh --out "$OUT" --resume
+./pipeline.sh resume --out "$OUT"
 ```
 
 Resume skips cells that already have 10 valid units. Do not edit or delete
@@ -244,7 +247,7 @@ From the artifact root:
 
 ```bash
 cd /path/to/scx_fcp/artifact
-python3 scripts/integrate_full14.py "$OUT" \
+./pipeline.sh analyze "$OUT" \
   --runs 10 --require-known-invalid \
   --out-dir "$OUT/integration"
 ```

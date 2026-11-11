@@ -5,7 +5,7 @@
 # No-reboot mode uses a balanced interleaved schedule across the five runs.
 set -uo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SERIAL=${SERIAL:-0.0.0.0:6520}
 ADB=${ADB:-/home/ngerr/bin/adb}
 A=("$ADB" -s "$SERIAL")
@@ -98,7 +98,7 @@ run_one() {
   local rc=0
   REBOOT=$reboot SERIAL=$SERIAL ADB=$ADB RESULTS_ROOT="$RESULTS_ROOT" \
     BENCH_ID=$BENCH_ID \
-    "$ROOT/scripts/run_jankbench_focused.sh" "$policy" "$run" >>"$LOG" 2>&1 || rc=$?
+    "$ROOT/scripts/internal/run_jankbench_focused.sh" "$policy" "$run" >>"$LOG" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
     log "FAILED policy=$policy run=$run rc=$rc"
     archive_failed "$policy" "$run"

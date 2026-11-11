@@ -5,6 +5,6 @@
 # Results go to artifact/results/jankbench_focused/<policy>/run-<n>.
 set -uo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 export RESULTS_ROOT="${RESULTS_ROOT:-$ROOT/results/jankbench_focused}"
-exec "$ROOT/scripts/run_jankbench_pilot.sh" "$@"
+exec "$ROOT/scripts/internal/run_jankbench_pilot.sh" "$@"

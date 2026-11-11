@@ -18,7 +18,7 @@ WARMUP_ITERATIONS=${WARMUP_ITERATIONS:-0}
 SERIAL=${SERIAL:-0.0.0.0:6520}
 ADB=${ADB:-/home/ngerr/bin/adb}
 A=("$ADB" -s "$SERIAL")
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 RESULTS_ROOT=${RESULTS_ROOT:-$ROOT/results/jankbench}
 OUT="$RESULTS_ROOT/$POLICY/run-$RUN"
 # Android SQLiteOpenHelper creates the file without an extension.
@@ -27,7 +27,7 @@ REMOTE=/data/local/tmp/scx
 BM_PKG=com.android.benchmark
 BM_ACT=$BM_PKG/.app.RunLocalBenchmarksActivity
 BM_ID=${BM_ID:-${BENCH_ID:-0}}
-BENCH_CFG=$ROOT/scripts/jankbench_benchmarks.json
+BENCH_CFG=$ROOT/scripts/internal/jankbench_benchmarks.json
 
 # Resolve the benchmark id against the shared catalogue so the harness and the
 # validator cannot disagree about the name, activity, or frame floors.
@@ -756,5 +756,5 @@ with open(sys.argv[1], "w", encoding="utf-8") as f:
     f.write("\n")
 PY
 
-python3 "$ROOT/scripts/parse_jankbench.py" "$OUT" | tee -a "$LOG" || die "parser failed"
+python3 "$ROOT/scripts/internal/parse_jankbench.py" "$OUT" | tee -a "$LOG" || die "parser failed"
 log "done policy=$POLICY run=$RUN"

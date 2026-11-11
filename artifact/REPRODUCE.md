@@ -55,7 +55,7 @@ export OUT=$PWD/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)
 export UI_ALLOW_INVALID=none
 
 RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
-  bash scripts/run_full_matrix_14.sh --out "$OUT"
+  ./pipeline.sh full --out "$OUT"
 ```
 
 The frozen scheduler must be:
@@ -70,7 +70,7 @@ From the artifact root:
 
 ```bash
 cd /path/to/scx_fcp/artifact
-python3 scripts/integrate_full14.py "$OUT" \
+./pipeline.sh analyze "$OUT" \
   --runs 10 --require-known-invalid \
   --out-dir "$OUT/integration"
 ```

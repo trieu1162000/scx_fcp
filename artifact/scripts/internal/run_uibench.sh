@@ -73,7 +73,7 @@ while [ $# -gt 0 ]; do
 done
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-PAPER=$(cd "$HERE/.." && pwd)
+PAPER=$(cd "$HERE/../.." && pwd)
 OUTROOT=${OUTROOT:-$PAPER/results/uibench_stable}
 APKDIR=${APKDIR:-$PAPER/workloads}
 

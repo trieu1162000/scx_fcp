@@ -28,7 +28,7 @@
 #   full_matrix_status.json/csv
 set -uo pipefail
 
-ARTIFACT=$(cd "$(dirname "$0")/.." && pwd)
+ARTIFACT=$(cd "$(dirname "$0")/../.." && pwd)
 ROOT=$(cd "$ARTIFACT/.." && pwd)
 PAPER=$ARTIFACT
 ADB=${ADB:-/home/ngerr/bin/adb}
@@ -52,7 +52,7 @@ LAVD_BIN=$ARTIFACT/build/bin/scx_lavd
 P2DQ_BIN=$ARTIFACT/build/bin/scx_p2dq
 EXPECTED_LAVD_SHA=638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9
 EXPECTED_P2DQ_SHA=c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1
-BENCH_CFG=$PAPER/scripts/jankbench_benchmarks.json
+BENCH_CFG=$PAPER/scripts/internal/jankbench_benchmarks.json
 UI_APK=$ARTIFACT/workloads/UiBench-app-debug.apk
 UI_TEST_APK=$ARTIFACT/workloads/UiBenchJankTests-debug.apk
 
@@ -288,10 +288,10 @@ run_jank_test() {
   RUNS=$RUNS RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
     BENCH_ID=$bid RESULTS_ROOT="$root" DRIVER_LOG="$root/driver.log" \
     VALIDATE_ATTEMPTS=$JANK_ATTEMPTS SKIP_VALID=0 \
-    bash "$PAPER/scripts/run_stage3_jankbench.sh" noreboot "$POLICIES" >>"$LOG" 2>&1
+    bash "$PAPER/scripts/internal/run_stage3_jankbench.sh" noreboot "$POLICIES" >>"$LOG" 2>&1
   rc=$?
   log "JankBench id=$bid stage3 rc=$rc"
-  python3 "$PAPER/scripts/validate_jankbench.py" "$root" \
+  python3 "$PAPER/scripts/internal/validate_jankbench.py" "$root" \
     --expected-runs "$RUNS" --run-count "$RUN_COUNT" --benchmark-id "$bid" \
     --policies "$POLICIES" >>"$LOG" 2>&1 || true
   jank_summary "$root" "$bid" | tee -a "$LOG" || true
@@ -301,8 +301,8 @@ run_jank_test() {
     RUNS=$RUNS RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
       BENCH_ID=$bid RESULTS_ROOT="$root" DRIVER_LOG="$root/driver.log" \
       VALIDATE_ATTEMPTS=$JANK_ATTEMPTS SKIP_VALID=1 \
-      bash "$PAPER/scripts/run_stage3_jankbench.sh" noreboot "$POLICIES" >>"$LOG" 2>&1 || true
-    python3 "$PAPER/scripts/validate_jankbench.py" "$root" \
+      bash "$PAPER/scripts/internal/run_stage3_jankbench.sh" noreboot "$POLICIES" >>"$LOG" 2>&1 || true
+    python3 "$PAPER/scripts/internal/validate_jankbench.py" "$root" \
       --expected-runs "$RUNS" --run-count "$RUN_COUNT" --benchmark-id "$bid" \
       --policies "$POLICIES" >>"$LOG" 2>&1 || true
     jank_summary "$root" "$bid" | tee -a "$LOG" || true
@@ -314,12 +314,12 @@ run_uibench() {
   log "UiBench tests=$UI_TESTS reps=$RUNS"
   SERIAL=$SERIAL ADB=$ADB VALIDATE_ATTEMPTS=$UI_ATTEMPTS \
     ALLOW_INVALID_TESTS=$UI_ALLOW_INVALID \
-    bash "$PAPER/scripts/run_uibench_matrix.sh" \
+    bash "$PAPER/scripts/internal/run_uibench_matrix.sh" \
       --out "$OUT/uibench" --rounds 1 --reps "$RUNS" \
       --tests "$UI_TESTS" --policies "$POLICIES" >>"$LOG" 2>&1
   rc=$?
   log "UiBench matrix rc=$rc"
-  python3 "$PAPER/scripts/validate_uibench.py" "$OUT/uibench" \
+  python3 "$PAPER/scripts/internal/validate_uibench.py" "$OUT/uibench" \
     --policies "$POLICIES" --tests "$UI_TESTS" --reps "$RUNS" \
     >>"$LOG" 2>&1 || true
   tail -40 "$OUT/uibench/validity.csv" 2>/dev/null | tee -a "$LOG" >/dev/null || true
@@ -351,7 +351,7 @@ if [ "$SKIP_UI" = 0 ]; then
   run_uibench
 fi
 
-python3 "$PAPER/scripts/aggregate_full_matrix.py" "$OUT" \
+python3 "$PAPER/scripts/internal/aggregate_full_matrix.py" "$OUT" \
   --policies "$POLICIES" --runs "$RUNS" | tee "$OUT/final_summary.txt"
 touch "$OUT/FULL_MATRIX_DONE"
 log "full matrix done out=$OUT"

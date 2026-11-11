@@ -4,8 +4,18 @@ Reproducibility package for the scx_fcp paper. This directory is the
 **canonical entrypoint** for building and running the evaluation; the design
 dossier remains under `scx_fcp/docs/`.
 
-Status: development. The full 14-test campaign is in progress; results are not
-final until `integrate_full14.py` reports `56/56` required cells.
+The package covers the scheduler, workload APKs, Cuttlefish launch, the
+validated matrix, and the aggregation path to paper tables.
+
+## Quick start
+
+```bash
+./artifact/pipeline.sh build
+./artifact/pipeline.sh launch
+./artifact/pipeline.sh smoke
+./artifact/pipeline.sh full
+./artifact/pipeline.sh analyze --out results/full14
+```
 
 ## Start here
 
@@ -14,7 +24,6 @@ final until `integrate_full14.py` reports `56/56` required cells.
 | Build the scheduler, synthetic bench, and workload APKs | [`BUILD.md`](BUILD.md) |
 | Set up Cuttlefish, run the matrix | [`RUN.md`](RUN.md) |
 | Fail-fast validity, retries, aggregation | [`VALIDATE.md`](VALIDATE.md) |
-| Current evaluation status and claim boundary | [`STATUS.md`](STATUS.md) |
 | End-to-end command sequence | [`REPRODUCE.md`](REPRODUCE.md) |
 | Paper-to-artifact map and known limitations | this file |
 | Design/ADR/code map | See the source tree's `docs/` dossier (not included in this docs branch) |
@@ -69,31 +78,17 @@ old_5a2e_src/         frozen scheduler source snapshot
 expected/             planned expected-output schema and sample tables
 ```
 
-The current lab scripts used by the campaign live under:
+The public pipeline is:
 
 ```text
-artifact/scripts/
-  run_full_matrix_14.sh
-  run_jankbench_pilot.sh
-  run_stage3_jankbench.sh
-  run_uibench_matrix.sh
-  validate_jankbench.py
-  integrate_full14.py
+artifact/pipeline.sh     build | launch | smoke | full | resume | analyze
 ```
 
-They are referenced here until the artifact directory is consolidated after
-the evaluation freeze.
+Per-benchmark adapters stay under `artifact/scripts/internal/` and are hidden
+behind the pipeline interface.
 
 ## Not included
 
-- The Cuttlefish kernel, initramfs, and system image (large; obtain the
-  matching AOSP 17 / Linux 6.18 image separately).
+- The Cuttlefish kernel, initramfs, and system image (obtain the matching
+  AOSP 17 / Linux 6.18 image separately).
 - The physical SA8155P board and its measurements.
-- Fabrics or fabricated results. Every number in the paper must come from raw
-  runs in a completed campaign.
-
-## Reporting rule
-
-Do not report a policy/cell until it has 10 valid units and the integration
-step reports the cell as complete. Do not report old 4-vCPU/pilot/32-vCPU
-numbers as current results.
