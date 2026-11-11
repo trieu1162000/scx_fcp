@@ -69,7 +69,11 @@ If using a prebuilt image, use its matching kernel instead of rebuilding.
 
 ### Initramfs
 
-Use the `initramfs.img` generated with the image, or repack the matching vendor
-ramdisk when the 6.18 kernel needs different modules. Set the resulting file as
-`INITRAMFS`.
+`make bzImage` produces only the kernel image; it does not create the
+Cuttlefish initramfs. The Android/Cuttlefish image build produces the image's
+`initramfs.img` / vendor ramdisk.
+
+Use that image initramfs directly, or repack its vendor ramdisk when the 6.18
+kernel needs different modules. The network/block/virtio modules must match the
+kernel. Set the resulting file as `INITRAMFS`.
 
