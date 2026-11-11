@@ -4,15 +4,29 @@
 
 ### Option A: prebuilt Android image
 
-Download the matching `aosp_cf_x86_64_only_phone` image and
-`cvd-host_package.tar.gz` from the Android build/CI source used by your lab.
-Extract the host package:
+Download a `aosp_cf_x86_64_only_phone` build from Android CI:
+
+- Build grid: <https://ci.android.com/builds/branches/aosp-main/grid>
+- Cuttlefish getting started: <https://source.android.com/docs/devices/cuttlefish/get-started>
+
+Select a build and download:
+
+```text
+aosp_cf_x86_64_only_phone-img-<build-id>.zip
+cvd-host_package.tar.gz
+```
+
+Unpack the image and host package:
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
 mkdir -p "$CF_HOME"
+unzip aosp_cf_x86_64_only_phone-img-<build-id>.zip -d "$CF_HOME"
 tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"
 ```
+
+The image directory contains `system.img`, `vendor_boot.img`, and the other
+Cuttlefish images. Use it as `CF_HOME` for launch.
 
 The system image directory contains `system.img`, `vendor_boot.img`, and the
 other Cuttlefish images. Use that directory as `CF_HOME` for launch.
@@ -73,7 +87,12 @@ If using a prebuilt image, use its matching kernel instead of rebuilding.
 Cuttlefish initramfs. The Android/Cuttlefish image build produces the image's
 `initramfs.img` / vendor ramdisk.
 
-Use that image initramfs directly, or repack its vendor ramdisk when the 6.18
-kernel needs different modules. The network/block/virtio modules must match the
-kernel. Set the resulting file as `INITRAMFS`.
+The downloaded image carries a vendor ramdisk whose modules match the image
+kernel (the lab image has `6.12.74-android16` modules). When booting a
+custom 6.18 kernel, extract that vendor ramdisk, replace its modules with the
+modules produced by the 6.18 kernel build, filter `modules.load` to the
+modules that exist, and repack the ramdisk with cpio + lz4.
+
+If you use the image's own kernel, use its matching ramdisk unchanged. Set the
+final file as `INITRAMFS`.
 
