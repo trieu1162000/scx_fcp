@@ -12,7 +12,9 @@ final until `integrate_full14.py` reports `56/56` required cells.
 | Need | Document |
 |---|---|
 | Build the scheduler, synthetic bench, and workload APKs | [`BUILD.md`](BUILD.md) |
-| Set up Cuttlefish, run the matrix, validate, analyze | [`RUN.md`](RUN.md) |
+| Set up Cuttlefish, run the matrix | [`RUN.md`](RUN.md) |
+| Fail-fast validity, retries, aggregation | [`VALIDATE.md`](VALIDATE.md) |
+| Current evaluation status and claim boundary | [`STATUS.md`](STATUS.md) |
 | End-to-end command sequence | [`REPRODUCE.md`](REPRODUCE.md) |
 | Paper-to-artifact map and known limitations | this file |
 | Design/ADR/code map | [`../docs/README.md`](../docs/README.md) |
