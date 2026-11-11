@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Launch the Android 17 / Linux 6.18 Cuttlefish image with a selected vCPU count.
+# Launch the Android 17 Cuttlefish image with a selected vCPU count.
 #
 # Required:
 #   CF_HOME       Cuttlefish host directory (contains bin/launch_cvd)
-#   KERNEL        path to bzImage
-#   INITRAMFS     path to the matching initramfs
 #
 # Optional:
+#   KERNEL        optional override kernel path
+#   INITRAMFS     optional override initramfs path
 #   CPUS          4, 8, 16, or 32 (default 16)
 #   MEMORY_MB     guest RAM in MiB (default: 4096/6144/6144/8192 by CPUS)
 #   SERIAL        adb serial (default 0.0.0.0:6520)
@@ -14,8 +14,6 @@
 set -euo pipefail
 
 : "${CF_HOME:?set CF_HOME to the Cuttlefish host directory}"
-: "${KERNEL:?set KERNEL to the Linux 6.18 bzImage}"
-: "${INITRAMFS:?set INITRAMFS to the matching initramfs}"
 
 CPUS=${CPUS:-16}
 case "$CPUS" in
@@ -30,6 +28,12 @@ SERIAL=${SERIAL:-0.0.0.0:6520}
 STOP_EXISTING=${STOP_EXISTING:-1}
 ADB=${ADB:-"$CF_HOME/bin/adb"}
 LOG="$CF_HOME/launch_a17_${CPUS}vcpu.log"
+KERNEL_ARGS=()
+if [ -n "${KERNEL:-}" ] || [ -n "${INITRAMFS:-}" ]; then
+  : "${KERNEL:?set KERNEL when INITRAMFS is set}"
+  : "${INITRAMFS:?set INITRAMFS when KERNEL is set}"
+  KERNEL_ARGS=(-kernel_path "$KERNEL" -initramfs_path "$INITRAMFS")
+fi
 
 if [ "$STOP_EXISTING" = 1 ]; then
   HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd" >/dev/null 2>&1 || true
@@ -41,8 +45,7 @@ fi
 cd "$CF_HOME"
 HOME="$CF_HOME" nohup "$CF_HOME/bin/launch_cvd" \
   -system_image_dir="$CF_HOME" \
-  -kernel_path="$KERNEL" \
-  -initramfs_path="$INITRAMFS" \
+  "${KERNEL_ARGS[@]}" \
   -extra_kernel_cmdline "sched_proxy_exec=0" \
   -enable_sandbox=false \
   -boot_slot=a \

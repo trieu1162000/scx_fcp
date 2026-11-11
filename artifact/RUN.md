@@ -10,8 +10,6 @@ export SCX_ROOT=/path/to/scx
 
 # Put the workload APKs in artifact/workloads/.
 export CF_HOME=/path/to/cuttlefish
-export KERNEL=/path/to/bzImage
-export INITRAMFS=/path/to/initramfs
 export SERIAL=0.0.0.0:6520
 
 ./artifact/pipeline.sh launch
@@ -54,9 +52,7 @@ Required:
 
 ```text
 Linux host with KVM
-Android 17 Cuttlefish system image
-Linux 6.18 kernel with CONFIG_SCHED_CLASS_EXT=y and CONFIG_DEBUG_INFO_BTF=y
-matching initramfs
+Android 17 Cuttlefish system image with sched_ext and BTF enabled
 16 vCPUs, 6144 MB guest RAM
 adb
 ```
@@ -71,8 +67,6 @@ It requires the Cuttlefish host, kernel, and initramfs paths:
 
 ```bash
 export CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
-export KERNEL=${KERNEL:?set the Linux 6.18 bzImage}
-export INITRAMFS=${INITRAMFS:?set the matching initramfs}
 export SERIAL=${SERIAL:-0.0.0.0:6520}
 ```
 
@@ -115,8 +109,6 @@ Use the parameterized launcher:
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
-export KERNEL=/path/to/bzImage
-export INITRAMFS=/path/to/initramfs.img
 export SERIAL=0.0.0.0:6520
 
 # 4 vCPU

@@ -80,6 +80,5 @@ behind the pipeline interface.
 
 ## Not included
 
-- The Cuttlefish kernel, initramfs, and system image (obtain the matching
-  AOSP 17 / Linux 6.18 image separately).
+- The Cuttlefish system image (obtain the matching AOSP 17 image separately).
 - The physical SA8155P board and its measurements.
