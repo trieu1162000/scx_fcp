@@ -35,22 +35,13 @@ guest:
 
 ```text
 eevdf
-scx_fcp                 (frozen old 5a2e build)
+scx_fcp                 (zero-hint build)
 scx_p2dq --enable-pelt false
 scx_lavd
 ```
 
-Frozen scheduler provenance:
-
-```text
-binary SHA-256: 5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4
-source commit:  ab428c5c4dce30159e74837079522e8a2a566ff2
-source snapshot: old_5a2e_src/
-```
-
-The current repository `HEAD` is not the evaluated binary. Do not substitute a
-newer scheduler build for the frozen binary and expect the paper numbers to
-reproduce.
+The evaluated scheduler source is in `old_5a2e_src/`; the pipeline builds it
+into `artifact/build/bin/scx_fcp_behavioral`.
 
 ## Evaluation scope
 

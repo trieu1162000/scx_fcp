@@ -25,7 +25,7 @@
 set -euo pipefail
 
 SERIAL=${SERIAL:-0.0.0.0:6520}
-ADB=${ADB:-/home/ngerr/bin/adb}
+ADB=${ADB:-adb}
 APP_PKG=com.android.test.uibench
 TEST_PKG=com.android.uibench.janktests
 RUNNER=$TEST_PKG/androidx.test.runner.AndroidJUnitRunner

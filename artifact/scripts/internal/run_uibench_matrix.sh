@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SERIAL=${SERIAL:-0.0.0.0:6520}
-ADB=${ADB:-/home/ngerr/bin/adb}
+ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAPER=$(cd "$HERE/../.." && pwd)
@@ -40,7 +40,7 @@ ALLOW_INVALID_TESTS=${ALLOW_INVALID_TESTS:-}
 # The frozen UiBench app shipped with an NPE in BitmapUploadActivity.  A fixed
 # debug build is available; when it is present and hash-matches, use it for
 # every UiBench block and require bitmap-upload like the other five tests.
-FIXED_UI_APK=${FIXED_UI_APK:-/home/ngerr/work/aosp-tests/uibench-dl/UiBench-app-fixed-debug.apk}
+FIXED_UI_APK=${FIXED_UI_APK:-$PAPER/workloads/UiBench-app-debug.apk}
 FIXED_UI_APK_SHA=${FIXED_UI_APK_SHA:-f8a6405f156861cfe4409b6001b97b37eb389293d0e5375fffae422fe34c5db2}
 REQUIRE_FIXED_UI_APK=${REQUIRE_FIXED_UI_APK:-1}
 if [ -f "$FIXED_UI_APK" ]; then
@@ -249,7 +249,7 @@ reboot_device() {
 push_bins() {
   "${A[@]}" shell "mkdir -p $REMOTE/stats" >/dev/null 2>&1 || true
   local base=${BINDIR:-$PAPER/build/bin}
-  local tune=${SCX_TUNE_ROOT:-/home/ngerr/workspace/scx_tune/variants}
+  local tune=${SCX_TUNE_ROOT:-$PAPER/variants}
   local tuned_bin=${TUNED_BIN:-$tune/v_a_depth3_tgid1ms/bin/scx_fcp}
   local want_tuned=${TUNED_SHA:-5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4}
   local want_lavd=${LAVD_SHA:-638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9}

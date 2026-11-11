@@ -31,7 +31,7 @@ set -uo pipefail
 ARTIFACT=$(cd "$(dirname "$0")/../.." && pwd)
 ROOT=$(cd "$ARTIFACT/.." && pwd)
 PAPER=$ARTIFACT
-ADB=${ADB:-/home/ngerr/bin/adb}
+ADB=${ADB:-adb}
 SERIAL=${SERIAL:-0.0.0.0:6520}
 POLICIES=${POLICIES:-eevdf,scx_fcp_v_a_depth3_tgid1ms,scx_p2dq_pelt_off,scx_lavd}
 JANK_TESTS=${JANK_TESTS:-0,1,2,3,4,5,6,7}
@@ -46,7 +46,7 @@ WARMUP_ITERATIONS=${WARMUP_ITERATIONS:-1}
 JANK_ATTEMPTS=${JANK_ATTEMPTS:-5}
 UI_ATTEMPTS=${UI_ATTEMPTS:-3}
 OUT=${OUT:-$PAPER/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)}
-OLD=${OLD:-$ARTIFACT/build/bin/scx_fcp}
+OLD=${OLD:-$ARTIFACT/build/bin/scx_fcp_behavioral}
 EXPECTED_OLD_SHA=5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4
 LAVD_BIN=$ARTIFACT/build/bin/scx_lavd
 P2DQ_BIN=$ARTIFACT/build/bin/scx_p2dq

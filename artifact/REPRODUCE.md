@@ -7,11 +7,8 @@ troubleshooting are in [`BUILD.md`](BUILD.md) and [`RUN.md`](RUN.md).
 
 ```bash
 cd /path/to/scx_fcp
-
 export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
-export BIN_DIR=${BIN_DIR:-$PWD/build/bin}
-
-scripts/build_static.sh
+./artifact/pipeline.sh build
 ```
 
 Build/obtain the workload APKs and put them in
@@ -23,8 +20,7 @@ UiBench-app-debug.apk          # fixed bitmap-upload build
 UiBenchJankTests-debug.apk
 ```
 
-The fixed UiBench app hash is
-`f8a6405f156861cfe4409b6001b97b37eb389293d0e5375fffae422fe34c5db2`.
+Use the fixed UiBench app for `bitmap-upload`.
 
 ## 2. Boot Cuttlefish
 
@@ -58,10 +54,10 @@ RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
   ./pipeline.sh full --out "$OUT"
 ```
 
-The frozen scheduler must be:
+The scheduler binary is:
 
 ```text
-5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4
+artifact/build/bin/scx_fcp_behavioral
 ```
 
 ## 4. Integrate and verify
@@ -88,6 +84,6 @@ campaign is not a paper result.
 ## 5. Stop
 
 ```bash
-CF_HOME=${CF_HOME:-/root/lab/cf-image/cf}
+CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
 HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd"
 ```

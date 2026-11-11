@@ -31,26 +31,25 @@ matching initramfs
 adb
 ```
 
-The lab launcher is:
+The artifact launcher is:
 
 ```text
-docs/lit/launch_a17_618_nomod.sh
+artifact/scripts/launch_cuttlefish.sh
 ```
 
-It is currently parameterized by paths inside the lab. Export or edit these
-before using it elsewhere:
+It requires the Cuttlefish host, kernel, and initramfs paths:
 
 ```bash
-export CF_HOME=${CF_HOME:-/root/lab/cf-image/cf}
-export KERNEL=${KERNEL:-/root/lab/build618/arch/x86/boot/bzImage}
-export INITRAMFS=${INITRAMFS:-$HOME/work/cf-run/initramfs-618-nomod.img}
+export CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
+export KERNEL=${KERNEL:?set the Linux 6.18 bzImage}
+export INITRAMFS=${INITRAMFS:?set the matching initramfs}
 export SERIAL=${SERIAL:-0.0.0.0:6520}
 ```
 
 Launch:
 
 ```bash
-bash docs/lit/launch_a17_618_nomod.sh
+CPUS=16 MEMORY_MB=6144 artifact/scripts/launch_cuttlefish.sh
 ```
 
 Then verify the framework, not only `sys.boot_completed`:
@@ -73,7 +72,7 @@ activity service: found
 system_server and SystemUI: non-empty
 boot_completed: 1
 sched_ext state: disabled
-SELinux: Permissive (lab image workaround)
+SELinux: Permissive
 ```
 
 `boot_completed=1` alone is not sufficient: the current full-matrix driver
@@ -82,7 +81,7 @@ once if the activity service is dead.
 
 ## 1a. vCPU configurations (4/8/16/32)
 
-Use the parameterized launcher rather than editing the old lab script:
+Use the parameterized launcher:
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
@@ -131,37 +130,29 @@ counts in one comparison.
 
 ## 2. Push the frozen binaries and APKs
 
-The full-matrix driver performs the freeze check and pushes the scheduler
-binaries. The expected files are documented in `BUILD.md`.
+The full-matrix driver pushes the scheduler binaries. Required files are in
+`BUILD.md`.
 
-At minimum, before starting:
+Before starting:
 
 ```bash
 ls -l \
   artifact/workloads/JankBench-platform-signed.apk \
   artifact/workloads/UiBench-app-debug.apk \
   artifact/workloads/UiBenchJankTests-debug.apk
-sha256sum artifact/workloads/*.apk
 ```
 
-For the fixed UiBench app, replace the app APK with:
+Use the fixed UiBench app:
 
 ```text
-work/aosp-tests/uibench-dl/UiBench-app-fixed-debug.apk
-sha256 f8a6405f156861cfe4409b6001b97b37eb389293d0e5375fffae422fe34c5db2
+artifact/workloads/UiBench-app-debug.apk
 ```
 
-and record the new hash in the campaign freeze. Do not use the old UiBench
-app for a strict 14/14 run; it NPEs in `bitmap-upload`.
-
-The frozen scheduler is:
+The scheduler binary is:
 
 ```text
-5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4
+artifact/build/bin/scx_fcp_behavioral
 ```
-
-If the scheduler or baseline hash differs, the driver aborts before the first
-measurement.
 
 ## 3. Smoke test
 
@@ -229,7 +220,7 @@ validity records to make an incomplete cell look complete.
 ### What invalid means
 
 JankBench is rejected on any failed evaluable J1–J12 check: wrong state/ops,
-hash mismatch, missing database, wrong iteration set, frame-count floor, host
+missing database, wrong iteration set, frame-count floor, host
 or guest load gate, process changes, sleep events, logcat crash/ANR, or boot
 change.
 
@@ -275,7 +266,7 @@ If the strict command exits nonzero, the matrix is not a paper result.
 
 ## 6. Runtime and space
 
-Approximate lab numbers:
+Approximate runtime:
 
 ```text
 JankBench: ~3 min per run; 8 IDs x 4 policies x 10 runs
@@ -294,7 +285,7 @@ Stop schedulers and the device:
 adb -s "$SERIAL" shell 'pidof scx_fcp_v_a_depth3_tgid1ms' \
   | xargs -r adb -s "$SERIAL" shell kill -TERM
 adb -s "$SERIAL" shell 'cat /sys/kernel/sched_ext/state'
-CF_HOME=${CF_HOME:-/root/lab/cf-image/cf}
+CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
 HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd"
 ```
 

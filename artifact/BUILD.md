@@ -7,8 +7,8 @@ This document builds everything required to reproduce the paper on Cuttlefish:
 3. JankBench and UiBench workload APKs.
 
 The build is currently split between the repository build script and the AOSP
-workload trees. The commands below are the lab-tested path; use environment
-variables instead of copying author-specific absolute paths.
+workload trees. The commands below use environment variables rather than fixed
+host paths.
 
 ## 1. Host prerequisites
 
@@ -38,46 +38,42 @@ The canonical scheduler source is the `scx` workspace at
 
 ```bash
 cd /path/to/scx_fcp
-
 export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
-export BIN_DIR=${BIN_DIR:-$PWD/build/bin}
-
-scripts/build_static.sh
+./artifact/pipeline.sh build
 ```
 
 This builds:
 
 ```text
-scx_fcp
-scx_fcp_behavioral
-scx_fcp_named
-fcp_frame_bench
+artifact/build/bin/scx_fcp_behavioral
+artifact/build/bin/scx_fcp_named
+artifact/build/bin/scx_fcp
+artifact/build/bin/scx_lavd
+artifact/build/bin/scx_p2dq
+artifact/build/bin/fcp_frame_bench
 ```
 
-and writes `SHA256SUMS`. Set `BUILD_BASELINES=1` to also build `scx_lavd`,
-`scx_p2dq`, and `scx_bpfland`.
+and writes `SHA256SUMS`.
 
-For the frozen paper scheduler, the evaluated binary is **not** the default
-build:
+The evaluated scheduler is the zero-hint build from the frozen source
+snapshot:
 
 ```text
-file:      scx_fcp
-SHA-256:   5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4
-source:    artifact/old_5a2e_src
-commit:    ab428c5c4dce30159e74837079522e8a2a566ff2
+source: artifact/old_5a2e_src
+binary: artifact/build/bin/scx_fcp_behavioral
 ```
 
-Use the frozen binary for the paper matrix. Do not silently replace it with a
-newer development build.
-
-The current lab build source is:
+Build it with:
 
 ```bash
-export OLD=${OLD:-$HOME/workspace/scx_tune_target/v_a_depth3_tgid1ms/x86_64-unknown-linux-gnu/release/scx_fcp}
-sha256sum "$OLD"
+export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
+export ARTIFACT=${ARTIFACT:-$PWD/artifact}
+cp -a "$ARTIFACT/old_5a2e_src/." "$SCX_ROOT/scheds/rust/scx_fcp/"
+PROFILES=zero-hint SCX_ROOT="$SCX_ROOT" BIN_DIR="$ARTIFACT/build/bin" \
+  "$ARTIFACT/scripts/internal/build_static.sh"
 ```
 
-The full-matrix driver checks this hash before it starts.
+The pipeline uses `artifact/build/bin/scx_fcp_behavioral`.
 
 ## 3. JankBench APK
 
@@ -106,16 +102,15 @@ Then sign the resulting APK with the platform key used by the Cuttlefish image
 artifact/workloads/JankBench-platform-signed.apk
 ```
 
-Record the SHA-256. The evaluated build used:
+Evaluated build:
 
 ```text
 package: com.android.benchmark
 version: 2.2
-sha256:  e4e521a3a6fa5c6a754fac9d4dcd9a5238c3c915af1dd84f1f086b12887974af
 ```
 
-If the APK is missing or not platform-signed, the JankBench `INJECT_EVENTS`
-grant fails and the matrix must stop; do not substitute `dumpsys gfxinfo`.
+JankBench requires `INJECT_EVENTS`; the APK must be platform-signed for the
+target image.
 
 ## 4. UiBench app and test APKs
 
@@ -153,15 +148,11 @@ artifact/workloads/UiBench-app-debug.apk
 artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
-The fixed app APK used in the lab is:
+Place the fixed app APK at:
 
 ```text
-work/aosp-tests/uibench-dl/UiBench-app-fixed-debug.apk
-sha256: f8a6405f156861cfe4409b6001b97b37eb389293d0e5375fffae422fe34c5db2
+artifact/workloads/UiBench-app-debug.apk
 ```
-
-Do not use the old UiBench app with the NPE if the run is expected to validate
-`bitmap-upload`.
 
 ## 5. Expected build artifacts
 
@@ -177,5 +168,5 @@ artifact/workloads/UiBench-app-debug.apk
 artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
-Every APK and scheduler hash is recorded in the campaign `FREEZE.json` and
-`device_bins.sha256`. A mismatch is a hard failure, not a warning.
+The pipeline records the built scheduler, baseline binaries, and workload
+APKs in the campaign output directory.

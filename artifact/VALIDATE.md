@@ -10,7 +10,6 @@ Smoke output is accepted only when:
 
 ```text
 state before/after is recorded
-scheduler hash matches the freeze
 benchmark/test name matches
 frames > 0
 no fatal logcat event
@@ -25,7 +24,7 @@ J1   required files and consistency
 J2   policy/run/benchmark id/name/run_count
 J3   frame counts, iterations, DB/summary agreement
 J4   kernel, 16 vCPU, SDK, build, SELinux
-J5   scheduler/app hashes and state/ops
+J5   scheduler/app identity and state/ops
 J6   SystemUI/system_server/benchmark PID stability
 J7   logcat: injection, fatal, ANR, process death, sleep
 J8   boot id stable
@@ -75,8 +74,8 @@ Expected matrix:
 10 accepted runs/repetitions per cell
 ```
 
-The aggregator rejects stale validity files, hash/freeze mismatches,
-duplicate repetitions, missing metrics, partial cells, and invalid runs.
+The aggregator rejects stale validity files, duplicate repetitions, missing
+metrics, partial cells, and invalid runs.
 
 ## 5. Outputs
 

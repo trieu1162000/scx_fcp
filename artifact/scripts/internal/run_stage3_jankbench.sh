@@ -7,7 +7,7 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SERIAL=${SERIAL:-0.0.0.0:6520}
-ADB=${ADB:-/home/ngerr/bin/adb}
+ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 MODE=${1:?usage: run_stage3_jankbench.sh <reboot|noreboot> <policies>}
 IFS=',' read -r -a POLICY_ARR <<< "${2:?policies}"

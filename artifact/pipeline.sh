@@ -32,6 +32,8 @@ shift || true
 
 case "$cmd" in
   build)
+    export BUILD_BASELINES=${BUILD_BASELINES:-1}
+    export BIN_DIR=${BIN_DIR:-$ARTIFACT/build/bin}
     exec "$INTERNAL/build_static.sh" "$@"
     ;;
   launch)
