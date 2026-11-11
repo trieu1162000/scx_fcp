@@ -103,7 +103,7 @@ Then sign the resulting APK with the platform key used by the Cuttlefish image
 (for example via `apksigner` or the AOSP signing tools), and place it at:
 
 ```text
-paper/scx_fcp_v2/results/device/JankBench-platform-signed.apk
+artifact/workloads/JankBench-platform-signed.apk
 ```
 
 Record the SHA-256. The evaluated build used:
@@ -149,8 +149,8 @@ janktests/build/outputs/apk/debug/janktests-debug.apk
 Copy them to:
 
 ```text
-paper/scx_fcp_v2/results/device/UiBench-app-debug.apk
-paper/scx_fcp_v2/results/device/UiBenchJankTests-debug.apk
+artifact/workloads/UiBench-app-debug.apk
+artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
 The fixed app APK used in the lab is:
@@ -172,9 +172,9 @@ $OLD                                                   # frozen scx_fcp
 $BIN_DIR/fcp_frame_bench                              # synthetic bench
 $BIN_DIR/scx_lavd
 $BIN_DIR/scx_p2dq
-paper/scx_fcp_v2/results/device/JankBench-platform-signed.apk
-paper/scx_fcp_v2/results/device/UiBench-app-debug.apk
-paper/scx_fcp_v2/results/device/UiBenchJankTests-debug.apk
+artifact/workloads/JankBench-platform-signed.apk
+artifact/workloads/UiBench-app-debug.apk
+artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
 Every APK and scheduler hash is recorded in the campaign `FREEZE.json` and

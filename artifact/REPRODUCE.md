@@ -15,7 +15,7 @@ scripts/build_static.sh
 ```
 
 Build/obtain the workload APKs and put them in
-`paper/scx_fcp_v2/results/device/`:
+`artifact/workloads/`:
 
 ```text
 JankBench-platform-signed.apk
@@ -46,7 +46,7 @@ Require a ready activity service and `sched_ext state=disabled`; do not trust
 ## 3. Run the full matrix
 
 ```bash
-cd paper/scx_fcp_v2
+cd artifact
 export SERIAL=0.0.0.0:6520
 export ADB=${ADB:-$HOME/bin/adb}
 export OUT=$PWD/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)
@@ -66,11 +66,11 @@ The frozen scheduler must be:
 
 ## 4. Integrate and verify
 
-From the repository root:
+From the artifact root:
 
 ```bash
-cd /path/to/scx_fcp
-python3 paper/scx_fcp_v2/scripts/integrate_full14.py "$OUT" \
+cd /path/to/scx_fcp/artifact
+python3 scripts/integrate_full14.py "$OUT" \
   --runs 10 --require-known-invalid \
   --out-dir "$OUT/integration"
 ```

@@ -6,7 +6,7 @@ the full 14-test paper matrix and paper tables.
 The current driver is:
 
 ```text
-paper/scx_fcp_v2/scripts/run_full_matrix_14.sh
+artifact/scripts/run_full_matrix_14.sh
 ```
 
 It performs per-run validity checks and reruns invalid measurements. Do not
@@ -133,10 +133,10 @@ At minimum, before starting:
 
 ```bash
 ls -l \
-  paper/scx_fcp_v2/results/device/JankBench-platform-signed.apk \
-  paper/scx_fcp_v2/results/device/UiBench-app-debug.apk \
-  paper/scx_fcp_v2/results/device/UiBenchJankTests-debug.apk
-sha256sum paper/scx_fcp_v2/results/device/*.apk
+  artifact/workloads/JankBench-platform-signed.apk \
+  artifact/workloads/UiBench-app-debug.apk \
+  artifact/workloads/UiBenchJankTests-debug.apk
+sha256sum artifact/workloads/*.apk
 ```
 
 For the fixed UiBench app, replace the app APK with:
@@ -163,7 +163,7 @@ measurement.
 Run the smallest useful cell first:
 
 ```bash
-cd paper/scx_fcp_v2
+cd artifact
 SERIAL=0.0.0.0:6520 ADB=$HOME/bin/adb \
 OUT=$PWD/results/smoke \
   bash scripts/run_full_matrix_14.sh \
@@ -184,7 +184,7 @@ Do not start the full campaign until this cell is valid.
 From the repository root:
 
 ```bash
-cd paper/scx_fcp_v2
+cd artifact
 
 export SERIAL=0.0.0.0:6520
 export ADB=${ADB:-$HOME/bin/adb}
@@ -240,11 +240,11 @@ validity logs; they are never pooled.
 
 ## 5. Aggregate and check expected results
 
-From the repository root:
+From the artifact root:
 
 ```bash
-cd /path/to/scx_fcp
-python3 paper/scx_fcp_v2/scripts/integrate_full14.py "$OUT" \
+cd /path/to/scx_fcp/artifact
+python3 scripts/integrate_full14.py "$OUT" \
   --runs 10 --require-known-invalid \
   --out-dir "$OUT/integration"
 ```

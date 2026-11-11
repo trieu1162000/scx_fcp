@@ -17,7 +17,7 @@ final until `integrate_full14.py` reports `56/56` required cells.
 | Current evaluation status and claim boundary | [`STATUS.md`](STATUS.md) |
 | End-to-end command sequence | [`REPRODUCE.md`](REPRODUCE.md) |
 | Paper-to-artifact map and known limitations | this file |
-| Design/ADR/code map | [`../docs/README.md`](../docs/README.md) |
+| Design/ADR/code map | See the source tree's `docs/` dossier (not included in this docs branch) |
 
 ## Evaluated configuration
 
@@ -72,7 +72,7 @@ expected/             planned expected-output schema and sample tables
 The current lab scripts used by the campaign live under:
 
 ```text
-paper/scx_fcp_v2/scripts/
+artifact/scripts/
   run_full_matrix_14.sh
   run_jankbench_pilot.sh
   run_stage3_jankbench.sh
