@@ -21,8 +21,9 @@ validated matrix, and the aggregation path to paper tables.
 
 | Need | Document |
 |---|---|
+| Host, Cuttlefish image, kernel, initramfs | [`SETUP.md`](SETUP.md) |
 | Build the scheduler, synthetic bench, and workload APKs | [`BUILD.md`](BUILD.md) |
-| Quick start, Cuttlefish setup, run the matrix | [`RUN.md`](RUN.md) |
+| Quick start, Cuttlefish launch, run the matrix | [`RUN.md`](RUN.md) |
 | Fail-fast validity, retries, aggregation | [`VALIDATE.md`](VALIDATE.md) |
 | Paper-to-artifact map and known limitations | this file |
 | Design/ADR/code map | See the source tree's `docs/` dossier (not included in this docs branch) |
@@ -59,8 +60,9 @@ blocks are moved aside and rerun; they are never pooled into a result. See
 ## What is packaged here
 
 ```text
-BUILD.md              host prerequisites, scheduler build, APK build
-RUN.md                quick start, Cuttlefish setup, full matrix, analysis
+SETUP.md              host, Cuttlefish image, kernel, initramfs
+BUILD.md              scheduler build, APK build
+RUN.md                quick start, Cuttlefish launch, full matrix, analysis
 scripts/launch_cuttlefish.sh  parameterized 4/8/16/32-vCPU launcher
 configs/              kernel/device/Cuttlefish/policy configs (added at freeze)
 old_5a2e_src/         frozen scheduler source snapshot

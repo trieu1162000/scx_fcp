@@ -43,78 +43,10 @@ build | launch | smoke | full | resume | analyze
 The per-benchmark adapters stay under `artifact/scripts/internal/`; they are
 not part of the user-facing interface.
 
-## 1. Get or build the Cuttlefish image and kernel
+## 1. Environment
 
-### Option A: prebuilt Android image
-
-Download the matching `aosp_cf_x86_64_only_phone` image and
-`cvd-host_package.tar.gz` from the Android build/CI source used by your lab.
-Extract the host package:
-
-```bash
-export CF_HOME=/path/to/cuttlefish
-mkdir -p "$CF_HOME"
-tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"
-```
-
-The system image directory contains `system.img`, `vendor_boot.img`, and the
-other Cuttlefish images. Use that directory as `CF_HOME` for launch.
-
-### Option B: build AOSP Cuttlefish
-
-```bash
-mkdir -p "$HOME/aosp"
-cd "$HOME/aosp"
-repo init -u https://android.googlesource.com/platform/manifest \
-  -b android-latest-release
-repo sync -j"$(nproc)"
-source build/envsetup.sh
-lunch aosp_cf_x86_64_only_phone-userdebug
-m -j"$(nproc)"
-```
-
-The host tools and image are under:
-
-```text
-out/target/product/vsoc_x86_64_only/
-  cvd-host_package.tar.gz
-  system.img
-  vendor_boot.img
-  ...
-```
-
-### Kernel
-
-Use a Linux 6.18 kernel with:
-
-```text
-CONFIG_SCHED_CLASS_EXT=y
-CONFIG_DEBUG_INFO_BTF=y
-CONFIG_BPF=y
-CONFIG_BPF_SYSCALL=y
-CONFIG_BPF_JIT=y
-# CONFIG_SCHED_PROXY_EXEC is not set
-```
-
-The kernel source is the Android common kernel:
-
-```bash
-git clone https://android.googlesource.com/kernel/common
-cd common
-# select the 6.18 branch/tag required by the image
-# configure the required options above
-make -j"$(nproc)" bzImage
-```
-
-The output is `arch/x86/boot/bzImage`; export it as `KERNEL`.
-
-If using a prebuilt image, use its matching kernel instead of rebuilding.
-
-### Initramfs
-
-Use the `initramfs.img` generated with the image, or repack the matching vendor
-ramdisk when the 6.18 kernel needs different modules. Set the resulting file as
-`INITRAMFS`.
+See [`SETUP.md`](SETUP.md) for Cuttlefish image, kernel, initramfs, and host
+requirements. The run steps below start after those inputs exist.
 
 ## 2. Cuttlefish prerequisites
 

@@ -3,6 +3,7 @@
 For the current paper artifact pipeline, use:
 
 ```text
+artifact/SETUP.md
 artifact/BUILD.md
 artifact/RUN.md
 ```
