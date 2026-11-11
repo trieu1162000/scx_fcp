@@ -3,15 +3,20 @@
 This document takes a clean Cuttlefish host from a booted Android 17 image to
 the full 14-test paper matrix and paper tables.
 
-The current driver is:
+The target driver path is:
 
 ```text
 artifact/scripts/run_full_matrix_14.sh
 ```
 
-It performs per-run validity checks and reruns invalid measurements. Do not
-replace it with the old `artifact/run_matrix.sh`, which implements the retired
-five-policy/three-ID protocol.
+This docs branch does not yet contain the implementation scripts. They are
+staged from the evaluation tree at artifact freeze; see
+[`scripts/README.md`](scripts/README.md). Do not claim the pipeline is runnable
+from this branch until that staging step is complete.
+
+When staged, the driver performs per-run validity checks and reruns invalid
+measurements. Do not replace it with the old `artifact/run_matrix.sh`, which
+implements the retired five-policy/three-ID protocol.
 
 ## 1. Cuttlefish prerequisites
 
