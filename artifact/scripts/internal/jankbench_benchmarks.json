@@ -1,0 +1,72 @@
+{
+  "_comment": "AOSP JankBench UI benchmark catalogue. IDs are the indices passed to com.android.benchmark.EXTRA_ENABLED_BENCHMARK_IDS; RunLocalBenchmarksActivity.translateBenchmarkIndex maps them onto ALL_TESTS. Names are the strings the app writes to ui_results.name. min_total_frames/min_iteration_frames and host_window_s are calibrated from the 2026-11-10 pilot and apply to RUN_COUNT=4 with WARMUP_ITERATIONS=1 (three measured iterations).",
+  "benchmarks": {
+    "0": {
+      "name": "List View Fling",
+      "slug": "list-view-fling",
+      "activity": "com.android.benchmark.ui.ListViewScrollActivity",
+      "min_total_frames": 3600,
+      "min_iteration_frames": 1000,
+      "host_window_s": [85.0, 260.0],
+      "reference": {"mean_ms": 5.113, "p95_ms": 14.444}
+    },
+    "1": {
+      "name": "Image List View Fling",
+      "slug": "image-list-view-fling",
+      "activity": "com.android.benchmark.ui.ImageListViewScrollActivity",
+      "min_total_frames": 2400,
+      "min_iteration_frames": 700,
+      "host_window_s": [60.0, 260.0]
+    },
+    "2": {
+      "name": "Shadow Grid Fling",
+      "slug": "shadow-grid-fling",
+      "activity": "com.android.benchmark.ui.ShadowGridActivity",
+      "min_total_frames": 2400,
+      "min_iteration_frames": 700,
+      "host_window_s": [60.0, 260.0]
+    },
+    "3": {
+      "name": "High-hitrate text render",
+      "slug": "text-high-hitrate",
+      "activity": "com.android.benchmark.ui.TextScrollActivity",
+      "min_total_frames": 2400,
+      "min_iteration_frames": 700,
+      "host_window_s": [60.0, 260.0],
+      "note": "TextScrollActivity hardcodes an 80 percent hit-rate adapter, so this repeats id 4."
+    },
+    "4": {
+      "name": "Low-hitrate text render",
+      "slug": "text-low-hitrate",
+      "activity": "com.android.benchmark.ui.TextScrollActivity",
+      "min_total_frames": 2400,
+      "min_iteration_frames": 700,
+      "host_window_s": [60.0, 260.0],
+      "note": "TextScrollActivity hardcodes an 80 percent hit-rate adapter, so this repeats id 3."
+    },
+    "5": {
+      "name": "Edit Text Input",
+      "slug": "edit-text-input",
+      "activity": "com.android.benchmark.ui.EditTextInputActivity",
+      "min_total_frames": 60,
+      "min_iteration_frames": 15,
+      "host_window_s": [30.0, 260.0]
+    },
+    "6": {
+      "name": "Overdraw Test",
+      "slug": "overdraw",
+      "activity": "com.android.benchmark.ui.FullScreenOverdrawActivity",
+      "min_total_frames": 900,
+      "min_iteration_frames": 200,
+      "host_window_s": [30.0, 260.0]
+    },
+    "7": {
+      "name": "Bitmap Upload Test",
+      "slug": "bitmap-upload",
+      "activity": "com.android.benchmark.ui.BitmapUploadActivity",
+      "min_total_frames": 900,
+      "min_iteration_frames": 200,
+      "host_window_s": [30.0, 260.0]
+    }
+  }
+}

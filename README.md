@@ -133,6 +133,9 @@ sudo ./target/release/scx_fcp -f 16667 -c 2000 -i 3000 -b 6000 -t 850 -s 2a
 
 For complete setup, cross-compilation (`x86_64` & `aarch64`), Android bundle packaging, and evaluation instructions, see:
 - **[`SETUP.md`](SETUP.md)** — End-to-end build, kernel configuration, Android bundle packaging, and benchmark setup
+- **[`artifact/README.md`](artifact/README.md)** — canonical paper build/run/reproduction package
+- **[`artifact/BUILD.md`](artifact/BUILD.md)** — scheduler, synthetic bench, and workload APK builds
+- **[`artifact/RUN.md`](artifact/RUN.md)** — Cuttlefish setup, 4/8/16/32-vCPU launch, full matrix, validity, analysis
 
 ---
 

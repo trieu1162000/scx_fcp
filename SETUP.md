@@ -1,5 +1,13 @@
 # scx_fcp Setup, Build, and Evaluation Guide
 
+For the current paper artifact pipeline, use:
+
+```text
+artifact/SETUP.md
+artifact/BUILD.md
+artifact/RUN.md
+```
+
 This guide provides step-by-step instructions to build `scx_fcp`, configure Linux/Android GKI kernels (`6.18` LTS and `7.2` mainline), package self-contained Android bundles (`x86_64` and `aarch64`), and run benchmarks on Linux hosts, 32-vCPU Android Cuttlefish, Car Emulator, and physical ARM64 Android devices.
 
 ---
