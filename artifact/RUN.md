@@ -10,7 +10,7 @@ export SCX_ROOT=/path/to/scx
 
 # Put the workload APKs in artifact/workloads/.
 export CF_HOME=/path/to/cuttlefish
-export SERIAL=0.0.0.0:6520
+export SERIAL=127.0.0.1:6520 # or 0.0.0.0:6520
 
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
@@ -19,41 +19,32 @@ export SERIAL=0.0.0.0:6520
   --out-dir results/full14/integration
 ```
 
-The sections below document the same sequence in detail.
-
 ## Overview
 
-This document takes a clean Cuttlefish host from a booted Android 17 image to
-the full 14-test paper matrix and paper tables.
+This document covers launching Android 17 Cuttlefish across **4, 8, 16, and 32 vCPUs** (`Symmetric` and `Asymmetric` `446:1024` topologies) and running:
+1. the 10-run multi-core scaling evaluation on `fcp_frame_bench` (Table 1);
+2. the full 8-benchmark AOSP `JankBench` suite (`BM_ID=0,1,2,3,4,5,6,7`, Table 2);
+3. the full 6-benchmark AOSP `UiBenchJankTests` suite (`6/6` passed, Table 3).
 
-The public entrypoint is:
-
-```text
-artifact/pipeline.sh
-```
-
-It exposes one compact interface:
+The public entrypoint is `artifact/pipeline.sh`:
 
 ```text
 build | launch | smoke | full | resume | analyze
 ```
-
-The per-benchmark adapters stay under `artifact/scripts/internal/`; they are
-not part of the user-facing interface.
 
 ## 1. Environment
 
 See [`SETUP.md`](SETUP.md) for Cuttlefish image, kernel, initramfs, and host
 requirements. The run steps below start after those inputs exist.
 
-## 2. Cuttlefish prerequisites
+## 2. Cuttlefish launch (4 / 8 / 16 / 32 vCPUs)
 
 Required:
 
 ```text
 Linux host with KVM
 Android 17 Cuttlefish system image with sched_ext and BTF enabled
-16 vCPUs, 6144 MB guest RAM
+16 vCPUs, 8192 MB guest RAM
 adb
 ```
 
@@ -66,22 +57,35 @@ artifact/scripts/launch_cuttlefish.sh
 It requires the Cuttlefish host, kernel, and initramfs paths:
 
 ```bash
-export CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
-export SERIAL=${SERIAL:-0.0.0.0:6520}
+export CF_HOME=/path/to/cuttlefish
+export SERIAL=127.0.0.1:6520 # or 0.0.0.1:6520
+
+# 4 vCPU
+CPUS=4 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
+
+# 8 vCPU
+CPUS=8 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
+
+# 16 vCPU
+CPUS=16 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
+
+# 32 vCPU
+CPUS=32 MEMORY_MB=8192 bash artifact/scripts/launch_cuttlefish.sh
 ```
 
-Launch:
-
-```bash
-CPUS=16 MEMORY_MB=6144 artifact/scripts/launch_cuttlefish.sh
-```
-
-Then verify the framework, not only `sys.boot_completed`:
+TODO: This should be added to launch_cuttlefish.sh, shouldn't it?
+The launcher passes `-cpus=N -memory_mb=M` to `launch_cvd` and waits for adb.
+Then verify the guest framework and configure OpenGL ES + `animator_duration_scale 1`:
 
 ```bash
 adb connect "$SERIAL"
 adb -s "$SERIAL" root
 adb -s "$SERIAL" shell setenforce 0
+
+TODO: check these or not?
+# adb -s "$SERIAL" shell setprop debug.hwui.renderer opengl
+# adb -s "$SERIAL" shell settings put global animator_duration_scale 1
+
 adb -s "$SERIAL" shell 'service check activity'
 adb -s "$SERIAL" shell 'pidof system_server'
 adb -s "$SERIAL" shell 'pidof com.android.systemui'
@@ -99,59 +103,10 @@ sched_ext state: disabled
 SELinux: Permissive
 ```
 
-`boot_completed=1` alone is not sufficient: the current full-matrix driver
-also waits for `activity`, `system_server`, and SystemUI, and restarts zygote
-once if the activity service is dead.
 
-## 3. vCPU configurations (4/8/16/32)
+## 3. Push the frozen binaries and APKs
 
-Use the parameterized launcher:
-
-```bash
-export CF_HOME=/path/to/cuttlefish
-export SERIAL=0.0.0.0:6520
-
-# 4 vCPU
-CPUS=4 MEMORY_MB=4096 \
-  bash artifact/scripts/launch_cuttlefish.sh
-
-# 8 vCPU
-CPUS=8 MEMORY_MB=6144 \
-  bash artifact/scripts/launch_cuttlefish.sh
-
-# 16 vCPU (paper configuration)
-CPUS=16 MEMORY_MB=6144 \
-  bash artifact/scripts/launch_cuttlefish.sh
-
-# 32 vCPU (functional/topology runs only on this host)
-CPUS=32 MEMORY_MB=8192 \
-  bash artifact/scripts/launch_cuttlefish.sh
-```
-
-The launcher passes `-cpus=N -memory_mb=M` to `launch_cvd` and waits for adb.
-
-Host rules:
-
-```text
-4/8 vCPU   smoke and scaling experiments; host can stay valid
-16 vCPU    paper configuration; requires at least 16 host threads
-32 vCPU    requires >=32 host threads; on the current 8C/16T host it is
-           oversubscribed and its performance numbers are not valid
-```
-
-The current strict full-matrix validator expects:
-
-```text
-nproc = 16
-```
-
-So only 16-vCPU runs are the paper matrix. A 4/8/32-vCPU launch is useful for
-functional checks or scaling, but the validator/expected-output contract must
-be updated before treating those numbers as paper results. Do not mix vCPU
-counts in one comparison.
-
-## 4. Push the frozen binaries and APKs
-
+TODO: This shoud be added to launch_cuttlefish.sh, shouldn't it?
 The full-matrix driver pushes the scheduler binaries. Required files are in
 `BUILD.md`.
 
@@ -159,24 +114,24 @@ Before starting:
 
 ```bash
 ls -l \
-  artifact/workloads/JankBench-platform-signed.apk \
-  artifact/workloads/UiBench-app-debug.apk \
-  artifact/workloads/UiBenchJankTests-debug.apk
+  artifact/workloads/JankBench.apk \
+  artifact/workloads/UiBench.apk \
+  artifact/workloads/UiBenchJankTests.apk
 ```
 
 Use the fixed UiBench app:
 
 ```text
-artifact/workloads/UiBench-app-debug.apk
+artifact/workloads/UiBench.apk
 ```
 
-The scheduler binary is:
+The scheduler binaries are:
 
 ```text
-artifact/build/bin/scx_fcp_behavioral
+artifact/build/bin/scx_*
 ```
 
-## 5. Smoke test
+## 4. Smoke test
 
 Run the smallest useful cell first:
 
@@ -195,16 +150,38 @@ cat "$OUT/jankbench/list-view-fling/validity.json"
 
 Do not start the full campaign until this cell is valid.
 
-## 6. Full matrix
+## 5. Multi-core scaling benchmark (`fcp_frame_bench`, 4 / 8 / 16 / 32 vCPUs, 10 Runs)
+
+For each vCPU configuration (`C` in `{4, 8, 16, 32}`), run 10 iterations per scheduler using the following setup:
+
+* **Background workers (`W_bg`):** `(3/4) * C` (corresponding to `3, 6, 12, 24` workers)
+* **Big-core list (`C_big`):** `[C/2 .. C-1]`
+* **Symmetric mode:** `renice 0` across all `crosvm_vcpu*` threads
+* **Asymmetric mode:** `renice +10` on `crosvm_vcpu0` through `crosvm_vcpu(C/2 - 1)`, and `renice 0` on `crosvm_vcpu(C/2)` through `crosvm_vcpu(C - 1)`
+
+```bash
+# Attach scx_fcp (default) or scx_fcp_behavioral (zero-hint):
+adb -s "$SERIAL" shell "cd /data/local/tmp/scx && nohup ./scx_fcp --big-cpus $BIG_LIST -f 11111 -s 0 >/dev/null 2>&1 &"
+
+# Run 10 iterations of 90 Hz 4-stage fcp_frame_bench:
+adb -s "$SERIAL" shell "
+  for r in \$(seq 1 10); do
+    /data/local/tmp/scx/fcp_frame_bench --scheduler scx_fcp_${CPUS}c_${TOPO} \
+      --frames 60 --hz 90 --stages 4 --stage-us 1800 --bg-workers $BG_W
+  done
+"
+```
+
+## 6. Full 14-test AOSP matrix (8 JankBench + 6 UiBenchJankTests)
 
 From the repository root:
 
 ```bash
 cd artifact
 
-export SERIAL=0.0.0.0:6520
-export ADB=${ADB:-$HOME/bin/adb}
-export OUT=$PWD/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)
+export SERIAL=127.0.0.1:6520 # or 0.0.0.0:6520
+export ADB=${ADB:-adb}
+export OUT=$PWD/results/full14_$(date +%Y%m%d-%H%M%S)
 
 # After the fixed UiBench APK is installed/recorded (use "none", not empty:
 # the current driver treats an unset/empty value as the old bitmap allowance):
@@ -217,10 +194,11 @@ RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
 Defaults:
 
 ```text
-policies: eevdf, scx_fcp_v_a_depth3_tgid1ms, scx_p2dq_pelt_off, scx_lavd
-JankBench: IDs 0..7
-UiBench: 6 tests
-10 valid runs/reps per (test, policy)
+policies:  eevdf, eevdf w/ proxy_exec, scx_fcp, scx_fcp_behavioral, scx_p2dq_pelt_off, scx_lavd
+JankBench: all 8 benchmark IDs (0,1,2,3,4,5,6,7)
+UiBench:   all 6 tests (bitmap-upload, shadow-grid-list, inflating-list,
+           slow-bind-recycler, trivial-recycler, layout-cache-low)
+Runs:      10 valid runs/reps per (test, policy)
 ```
 
 `UI_ALLOW_INVALID=none` is important for the final run: it makes
@@ -254,9 +232,7 @@ logcat event.
 Invalid attempts are moved to `_invalid/` and rerun. They remain visible in
 validity logs; they are never pooled.
 
-## 7. Aggregate and check expected results
-
-From the artifact root:
+## 7. Aggregate and verify
 
 ```bash
 cd /path/to/scx_fcp/artifact
@@ -284,22 +260,7 @@ full14_uibench.tex
 full14_website.html
 ```
 
-If the strict command exits nonzero, the matrix is not a paper result.
-
-## 8. Runtime and space
-
-Approximate runtime:
-
-```text
-JankBench: ~3 min per run; 8 IDs x 4 policies x 10 runs
-UiBench:   several minutes per block; 6 tests x 10 reps x 4 policies
-Raw data:  tens of GB depending on retained logcat/gfxinfo databases
-```
-
-Plan for an overnight campaign and keep raw data. Do not delete invalid or
-failed runs from the archive; they are part of the validity record.
-
-## 9. Cleanup
+## 8. Cleanup
 
 Stop schedulers and the device:
 

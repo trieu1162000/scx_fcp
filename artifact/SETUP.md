@@ -1,6 +1,6 @@
-# Cuttlefish image setup
+# Cuttlefish image and kernel setup
 
-## 1. Download the Android 17 image
+## 1. Android 17 Cuttlefish image and kernel (`6.18` / `7.2`)
 
 Use a prebuilt `aosp_cf_x86_64_only_phone` image from Android CI:
 
@@ -23,45 +23,36 @@ unzip aosp_cf_x86_64_only_phone-img-<build-id>.zip -d "$CF_HOME"
 tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"
 ```
 
-## 2. Use the image as-is
+The current kernel against the cf prebuilt image is 6.12 AFAIUC, so if you wish to boot with an Android mainline kernel (`6.18` or `7.2`), need to manually clone, see #2, then the simply compile with:
 
-The image contains its kernel and ramdisk. Rebuilding that kernel after
-changing Kconfig options produces a custom kernel; use the matching ramdisk
-for that kernel. If you do not rebuild the kernel, no custom-kernel step is
-needed.
+```text
+CONFIG_BPF=y
+CONFIG_BPF_SYSCALL=y
+CONFIG_BPF_JIT=y
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_SCHED_CLASS_EXT=y
+CONFIG_SCHED_PROXY_EXEC=n
+```
 
-Launch Cuttlefish with the image directory:
+(To evaluate stock `EEVDF + Proxy Execution`, boot the companion (eg. `6.18.21`) kernel built with `CONFIG_SCHED_PROXY_EXEC=y` and `CONFIG_SCHED_CLASS_EXT=n`.)
+
+## 2. Building the kernel and repacking for vendor modules
+TODO: update steps
+
+## 3. Launching Cuttlefish across 4, 8, 16, and 32 vCPUs
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
-export SERIAL=0.0.0.0:6520
+export KERNEL=/path/to/bzImage
+export INITRAMFS=/path/to/initramfs.img
+export SERIAL=127.0.0.1:6520 # or 0.0.0.0:6520
 
-CPUS=16 MEMORY_MB=6144 artifact/scripts/launch_cuttlefish.sh
+CPUS=16 MEMORY_MB=8192 artifact/scripts/launch_cuttlefish.sh
 ```
 
-No separate kernel build or initramfs repack is required for the paper setup.
-
-## 3. Build the image from AOSP (optional)
+For Cuttlefish instances using `guest_swiftshader`, ensure HWUI uses the OpenGL ES pipeline and keep `ValueAnimator` duration scaling enabled:
 
 ```bash
-mkdir -p "$HOME/aosp"
-cd "$HOME/aosp"
-repo init -u https://android.googlesource.com/platform/manifest \
-  -b android-latest-release
-repo sync -j"$(nproc)"
-source build/envsetup.sh
-lunch aosp_cf_x86_64_only_phone-userdebug
-m -j"$(nproc)"
+adb -s "$SERIAL" shell setprop debug.hwui.renderer opengl
+adb -s "$SERIAL" shell settings put global animator_duration_scale 1
 ```
-
-The image and host package are under:
-
-```text
-out/target/product/vsoc_x86_64_only/
-  cvd-host_package.tar.gz
-  system.img
-  vendor_boot.img
-  ...
-```
-
-Use that directory as `CF_HOME`.
