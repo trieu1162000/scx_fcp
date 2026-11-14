@@ -177,9 +177,11 @@ BIN_DIR=$PWD/build/bin SERIAL=127.0.0.1:6520 \
   tests/jankbench/run_jankbench.sh -p scx_fcp_behavioral -n 1
 ```
 
-See `REPRODUCE.md` and `tests/README.md` for device setup, environment
-variables, and result layout. See `SETUP.md` for cross-compilation, Android
-bundles, and kernel configuration.
+For complete setup, cross-compilation (`x86_64` & `aarch64`), Android bundle packaging, and evaluation instructions, see:
+- **[`SETUP.md`](SETUP.md)** — End-to-end build, kernel configuration, Android bundle packaging, and benchmark setup
+- **[`artifact/README.md`](artifact/README.md)** — canonical paper build/run/reproduction package
+- **[`artifact/BUILD.md`](artifact/BUILD.md)** — scheduler, synthetic bench, and workload APK builds
+- **[`artifact/RUN.md`](artifact/RUN.md)** — Cuttlefish setup, 4/8/16/32-vCPU launch, full matrix, validity, analysis
 
 ## Use cases
 

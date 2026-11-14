@@ -1,9 +1,14 @@
 # scx_fcp setup, build, and evaluation
 
-This guide covers host build, Android bundle packaging, kernel requirements,
-and benchmark setup. The canonical scheduler source is the `scx` workspace at
-`$SCX_ROOT/scheds/rust/scx_fcp`. This repository mirrors that directory.
-Set `SCX_ROOT` to the workspace path.
+For the current paper artifact pipeline, use:
+
+```text
+artifact/SETUP.md
+artifact/BUILD.md
+artifact/RUN.md
+```
+
+This guide provides step-by-step instructions to build `scx_fcp`, configure Linux/Android GKI kernels (`6.18` LTS and `7.2` mainline), package self-contained Android bundles (`x86_64` and `aarch64`), and run benchmarks on Linux hosts, 32-vCPU Android Cuttlefish, Car Emulator, and physical ARM64 Android devices.
 
 ## 1. Host prerequisites
 
