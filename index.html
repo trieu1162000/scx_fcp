@@ -1,317 +1,513 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html>
+
 <head>
-  <meta charset="utf-8">
-  <meta name="color-scheme" content="light">
-  <meta name="description" content="scx_fcp: frame-critical scheduling for Android UI pipelines with sched_ext">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>scx_fcp: Frame-Critical Scheduling for Android UI</title>
+    <meta charset="utf-8">
+    <meta name="description"
+        content="scx_fcp: Bounded Frame-Context Token Propagation for Heterogeneous Android UI Pipelines in sched_ext">
+    <meta name="keywords"
+        content="scx_fcp, sched_ext, eBPF, Linux Scheduler, Android, JankBench, UiBench, big.LITTLE, Priority Inversion">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>scx_fcp: Bounded Frame-Context Token Propagation for Heterogeneous Android UI Pipelines in sched_ext</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Noto+Sans:wght@400;500;700&family=Castoro&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
 
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="./static/css/bulma.min.css">
+    <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+    <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+    <link rel="stylesheet" href="./static/css/index.css">
 </head>
+
 <body>
 
-<section class="hero">
-  <div class="hero-body">
-    <div class="container is-max-widescreen">
-      <div class="columns is-centered">
-        <div class="column has-text-centered">
-          <div class="brand-mark" aria-hidden="true">FCP</div>
-          <p class="publication-venue">sched_ext &middot; Android UI &middot; research prototype</p>
-          <h1 class="subtitle is-3 publication-title">
-            scx_fcp<br>
-            Frame-Critical Scheduling for Android UI Pipelines
-          </h1>
+    <section class="hero">
+        <div class="hero-body">
+            <div class="container is-max-widescreen">
+                <div class="columns is-centered">
+                    <div class="column has-text-centered">
+                        <h1 class="subtitle is-3 publication-title">
+                            <b>scx_fcp:</b> Bounded Frame-Context Token Propagation for Heterogeneous Android UI
+                            Pipelines in sched_ext
+                        </h1>
+                        <div class="is-size-5 publication-authors">
+                            <span class="author-block">
+                                <a href="https://github.com/trieu1162000" target="_blank">Nhat-Trieu Huynh-Pham</a><sup>1*</sup>
+                            </span>
+                        </div>
 
-          <p class="project-tagline">
-            A loadable <code>sched_ext</code> policy that carries frame context across sleeps
-            and schedules the tasks a frame actually depends on.
-          </p>
+                        <br>
 
-          <div class="column has-text-centered">
-            <div class="publication-links">
-              <span class="link-block">
-                <a href="#overview" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-circle-info"></i></span>
-                  <span>Overview</span>
-                </a>
-              </span>
-              <span class="link-block">
-                <a href="#how" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-diagram-project"></i></span>
-                  <span>How it works</span>
-                </a>
-              </span>
-              <span class="link-block">
-                <a href="#measurements" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-chart-line"></i></span>
-                  <span>Measurements</span>
-                </a>
-              </span>
-              <span class="link-block">
-                <a href="https://github.com/trieu1162000/scx_fcp" target="_blank" rel="noopener"
-                   class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fab fa-github"></i></span>
-                  <span>Code</span>
-                </a>
-              </span>
+                        <div class="is-size-5 publication-authors">
+                            <span class="author-block"><sup>1</sup>LG Electronics</span>
+                        </div>
+
+                        <br>
+
+                        <div class="is-size-5 thanks">
+                            <span class="author-block">Corresponding author:</span>
+                            <span class="author-block"><a
+                                    href="mailto:trieu.huynh@lge.com">trieu.huynh@lge.com</a></span>
+                        </div>
+
+                        <div class="column has-text-centered">
+                            <div class="publication-links">
+                                <span class="link-block">
+                                    <a href="https://github.com/trieu1162000/scx_fcp/blob/main/paper/main.pdf"
+                                        target="_blank" class="external-link button is-normal is-rounded is-dark">
+                                        <span class="icon">
+                                            <i class="ai ai-arxiv"></i>
+                                        </span>
+                                        <span>Paper</span>
+                                    </a>
+                                </span>
+                                <span class="link-block">
+                                    <a href="https://github.com/trieu1162000/scx_fcp" target="_blank"
+                                        class="external-link button is-normal is-rounded is-dark">
+                                        <span class="icon">
+                                            <i class="fab fa-github"></i>
+                                        </span>
+                                        <span>Code</span>
+                                    </a>
+                                </span>
+                                <span class="link-block">
+                                    <a href="https://github.com/trieu1162000/scx_fcp_docs" target="_blank"
+                                        class="external-link button is-normal is-rounded is-dark">
+                                        <span class="icon">
+                                            <i class="fas fa-book"></i>
+                                        </span>
+                                        <span>Artifact</span>
+                                    </a>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<section class="hero teaser">
-  <div class="container is-max-desktop">
-    <div class="hero-body">
-      <div class="content has-text-centered">
-        <img src="assets/figures/problem.svg"
-             alt="A cross-process frame chain collapses into independent per-task scheduler records">
-        <p class="figure-caption">
-          A frame chain collapses into independent scheduler records. The upper layer shows the
-          schematic cross-process frame path. Below the user/kernel boundary, each observed wakeup
-          updates its aligned per-task record, and the records feed a shared run queue and CPU
-          dispatcher. The stock scheduler retains no frame identifier, dependency chain, or shared
-          deadline.
-        </p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="section hero is-light" id="overview">
-  <div class="container is-max-desktop">
-    <div class="columns is-centered has-text-centered">
-      <div class="column is-four-fifths">
-        <h2 class="title is-3">Overview</h2>
-        <div class="content has-text-justified">
-          <p>
-            <strong>scx_fcp</strong> is a frame critical-path and thermal-debt scheduler for
-            heterogeneous Android and automotive SoCs. It targets VSYNC-driven display pipelines
-            &mdash; input, UI thread, render thread, SurfaceFlinger, and HWC &mdash; on
-            <code>big.LITTLE</code> and tri-cluster (LITTLE / Big / Prime) systems.
-          </p>
-          <p>
-            Android frames are chains of short-lived tasks that sleep and wake across process
-            boundaries. A per-task scheduler sees each wakeup independently, while the frame root
-            and the helpers it depends on disappear between scheduler callbacks. scx_fcp keeps a
-            bounded notion of that context in BPF and uses it for placement, without framework or
-            application changes.
-          </p>
-          <p>
-            All scheduling decisions execute in BPF. The userspace daemon discovers per-CPU
-            capacity, populates BPF maps and rodata, and reports telemetry.
-          </p>
-          <p class="status-note">
-            Status: experimental research prototype. Options and telemetry may change. Measurements
-            on this page track the current development snapshot and are not a final performance claim.
-          </p>
+    <section class="hero teaser">
+        <div class="container is-max-desktop">
+            <div class="content has-text-centered">
+                <img src="assets/figures/problem.svg" alt="Cross-process frame chain vs per-task scheduler state"
+                    width="95%" />
+                <p class="is-size-6">
+                    Above the user/kernel boundary, producing an Android display frame requires a sequential
+                    cross-process chain (UIThread &rarr; RenderThread &rarr; Binder &rarr; SurfaceFlinger). Below the
+                    boundary, per-task schedulers evaluate each wakeup in isolation without a shared frame identifier,
+                    dependency chain, or deadline.
+                </p>
+            </div>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<section class="section" id="how">
-  <div class="container is-max-desktop">
-    <div class="columns is-centered has-text-centered">
-      <div class="column is-four-fifths">
-        <h2 class="title is-3">How it works</h2>
-        <div class="content has-text-justified">
-          <p>
-            The policy infers a frame root from wakeup behavior, carries a bounded token across
-            synchronous and recent same-thread-group edges, and uses the token for placement. The
-            application, framework, graphics stack, and kernel remain unchanged.
-          </p>
+    <section class="section hero is-light">
+        <div class="container is-max-desktop">
+            <div class="columns is-centered has-text-centered">
+                <div class="column is-four-fifths">
+                    <h2 class="title is-3">Abstract</h2>
+                    <div class="content has-text-justified">
+                        <p>
+                            Android display frames execute as distributed producer&ndash;consumer chains across
+                            application and system processes (Input &rarr; UIThread &rarr; RenderThread &rarr; Binder
+                            &rarr; SurfaceFlinger &rarr; hwcomposer), separated by inter-frame VSYNC sleeps and
+                            synchronous handoffs. Stock Linux schedulers (<b>EEVDF</b> and <b>EEVDF w/ ProxyExec</b>)
+                            and general-purpose sched_ext policies (<b>scx_p2dq</b>, <b>scx_lavd</b>) evaluate each task
+                            wakeup independently. Because downstream frame helpers execute only briefly per frame and
+                            communicate across user-space futex and Binder waitqueues rather than in-kernel mutex
+                            chains, per-task schedulers lose the shared frame deadline and frequently place critical
+                            pipeline stages onto low-capacity LITTLE cores or behind compute-bound background workers.
+                        </p>
+                        <p>
+                            We introduce <b>scx_fcp</b>, a loadable Linux sched_ext scheduler built around <b>bounded
+                                frame-context token propagation</b>. Working entirely within eBPF without kernel or
+                            framework patches, <b>scx_fcp</b> infers frame entry roots (<i>d</i> = 0) from
+                            quasi-periodic VSYNC wakeup behavior under a directed-acyclic-graph (DAG) source invariant,
+                            mints an epoch-stamped token bounded to the frame budget, and propagates that token across
+                            synchronous (SCX_WAKE_SYNC) and sequential same-thread-group handoffs (<i>d</i> &le; 5). To
+                            prevent priority inflation under parallel thread-pool fan-out, <b>scx_fcp</b> enforces a
+                            per-burst sequential handoff cap (<i>n</i><sub>woke</sub> &le; 1), cross-epoch token
+                            renewal, and service-budget revocation, dispatching active token holders through a
+                            slack-ordered critical queue onto high-capacity cores. Across 4&ndash;32 vCPU asymmetric
+                            (446 : 1024) and symmetric (1024 : 1024) Android Cuttlefish instances and a physical 8-core
+                            tri-cluster Qualcomm Snapdragon SA8155P SoC (444 : 902 : 1024, Android 14, Linux 6.1.145),
+                            <b>scx_fcp</b> sustains 97.1%&ndash;99.9% high-capacity stage residency, reduces aggregate
+                            AOSP <b>JankBench</b> mean frame latency by 44.3% on Cuttlefish (4.23 ms vs. 7.59 ms) and
+                            75.8% on physical SA8155P hardware (3.56 ms vs. 14.73 ms under <b>EEVDF</b>, and 0.09% vs.
+                            56.59% frames &ge; 12 ms), and cuts <b>UiBenchJankTests</b> weighted <i>p</i><sub>99</sub>
+                            latency by 48.3%&ndash;52.5% on SA8155P while reducing eBPF CPU time by 27.8%&ndash;47.4%
+                            compared to <b>scx_lavd</b>.
+                        </p>
+                    </div>
+                </div>
+            </div>
         </div>
+    </section>
 
-        <img src="assets/figures/mechanism.svg"
-             alt="Frame-context scheduling in a loadable sched_ext policy">
-        <p class="figure-caption">
-          Frame-context scheduling in a loadable policy. Wakeup behavior promotes a root; its token
-          crosses only synchronous or recent same-thread-group edges, expires with the frame budget,
-          and is bounded to depth three. Token holders enter the critical queue and prefer an idle
-          high-capacity CPU. Android user space and the Linux kernel remain unchanged.
-        </p>
+    <section class="section">
+        <div class="container is-max-desktop">
+            <div class="columns is-centered has-text-centered">
+                <div class="column is-four-fifths">
+                    <h2 class="title is-3">Method Overview</h2>
+                    <div class="content has-text-justified">
+                        <p>
+                            We propose <b>scx_fcp</b>, a frame-critical-path scheduler that bridges the semantic gap
+                            between cross-process UI rendering pipelines and per-task kernel dispatch. As illustrated in
+                            the architecture diagram below, <b>scx_fcp</b> executes all admission, inheritance, and
+                            placement decisions inside a single wakeup callback (ops.select_cpu) and three stratified
+                            dispatch queues:
+                        </p>
+                    </div>
+                    <img id="model" width="100%" src="assets/figures/mechanism.svg"
+                        alt="Architecture of scx_fcp bounded frame-context token propagation">
 
-        <div class="content has-text-justified">
-          <ul>
-            <li>
-              <strong>Frame critical-path token (FCP-Token).</strong> Frame roots receive a
-              generation-stamped token with a bounded hop depth and a frame-budget TTL. The token
-              follows synchronous wakeups and tight same-thread-group edges, so a helper woken by
-              a UI stage inherits the frame context instead of being treated as an unrelated task.
-            </li>
-            <li>
-              <strong>Dual-timescale burst-window utilization (DT-BWU).</strong> A 4&nbsp;ms
-              sub-frame burst window runs alongside the 32&nbsp;ms PELT EWMA. The effective demand
-              is the maximum of the two, preserving active-phase demand across VSYNC sleep gaps.
-            </li>
-            <li>
-              <strong>Predictive thermal-debt core selection (PTD-EAS).</strong> Each CPU tracks an
-              exponentially decaying thermal debt. High-demand tasks prefer idle big or Prime cores
-              whose debt is below the configured cap; otherwise they spill to cooler cores. A
-              bounded rescue rule prevents background starvation.
-            </li>
-          </ul>
+                    <br>
+                    <br>
+
+                    <div class="content has-text-justified">
+                        <ul>
+                            <li><strong>DAG-Source Behavioral Frame-Root Inference</strong>: Admits frame roots
+                                (<i>d</i> = 0) from quasi-periodic VSYNC sleep-wake-handoff intervals ([3.5 ms, 85 ms]),
+                                filtering out sub-frame synchronization blocks (&lt; 3.5 ms), retaining root state
+                                across inter-gesture pauses (&gt; 85 ms), and enforcing a DAG Source Invariant so
+                                internal worker-pool threads woken by non-leader peers never self-promote.</li>
+                            <li><strong>Fan-Out-Capped Causal Token Propagation</strong>: Propagates active tokens
+                                <i>T</i> = (<i>e</i>, <i>s</i>, <i>t</i><sub>exp</sub>, <i>d</i>) across SCX_WAKE_SYNC
+                                and tight same-TGID handoffs (&le; 3.5 ms run window) up to depth <i>d</i> &le; 5 while
+                                capping same-TGID fan-out to at most one wakee per block (<i>n</i><sub>woke</sub> &le;
+                                1), keeping parallel software-shader pools (Thread&lt;00..15&gt;) in Tier 1 rather than
+                                flooding the critical queue.</li>
+                            <li><strong>Slack-Ordered Heterogeneous Dispatch</strong>: Orders active token holders in
+                                FCP_DSQ_CRITICAL by remaining stage slack <i>D</i>(<i>t</i>) = <i>t</i> + &gamma;
+                                <i>B</i><sub>rem</sub>(<i>t</i>) / (1 + <i>d</i>) and routes them to high-capacity cores
+                                (normalized Linux scheduler capacity 902&ndash;1024 on Cortex-A76/A78 big/Prime cores
+                                vs. 444&ndash;446 on Cortex-A55 LITTLE/Silver cores).</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<section class="section hero is-light" id="measurements">
-  <div class="container is-max-desktop">
-    <div class="columns is-centered has-text-centered">
-      <div class="column is-four-fifths">
-        <h2 class="title is-3">Measurements</h2>
-        <div class="content has-text-justified">
-          <p>
-            Current development snapshot on the Cuttlefish and device testbeds. The plots track
-            work in progress; they are not a final performance claim.
-          </p>
+    <section class="section">
+        <div class="container is-max-desktop">
+            <div class="columns is-centered has-text-centered">
+                <div class="column is-four-fifths">
+                    <h2 class="title is-3">Experimental Results</h2>
+                    <div class="content has-text-justified">
+                        <p>
+                            We evaluate <b>scx_fcp</b> against four baselines—stock <b>EEVDF</b>, <b>EEVDF w/
+                                ProxyExec</b> (CONFIG_SCHED_PROXY_EXEC=y on Linux 6.12.74-android16), <b>scx_p2dq</b>,
+                            and <b>scx_lavd</b>—across the full 8-benchmark AOSP <b>JankBench</b> suite, the 6-benchmark
+                            AOSP <b>UiBenchJankTests</b> suite, 4/8/16/32-vCPU pipeline scaling sweeps (Linux
+                            7.2.0-rc9-mainline), and a physical 8-core tri-cluster ARM64 SoC (Linux 6.1.145).
+                        </p>
+                    </div>
+                    <img src="assets/figures/main_results.svg" alt="Main Results Summary Table" width="100%">
+                    <br>
+                    <br>
+                    <img src="assets/figures/result.svg" alt="Main Results on AOSP JankBench" width="95%">
+                    <p class="is-size-7 has-text-centered">
+                        Aggregate AOSP <b>JankBench</b> frame duration (Mean, <i>p</i><sub>50</sub>,
+                        <i>p</i><sub>95</sub>, <i>p</i><sub>99</sub>) and percentage of frames exceeding 12.0 ms across
+                        all 8 benchmarks (9,586 frames per policy) on 32-vCPU asymmetric (446 : 1024) Cuttlefish.
+                    </p>
+
+                    <br>
+                    <br>
+
+                    <div class="content has-text-justified">
+                        <p>
+                            <b>Component Ablation &amp; Role of Thread-Name Seeding.</b> To verify that performance
+                            gains stem from bounded causal token propagation rather than static thread naming, the
+                            ablation below isolates each mechanism of <b>scx_fcp</b>. Keeping thread-name hints enabled
+                            while disabling token propagation (<b>Hints Only (w/o Tok.)</b>) degrades
+                            <i>p</i><sub>99</sub> latency to 33.903 ms (5.5&times; worse than full <b>scx_fcp</b>),
+                            because unnamed downstream Binder and composite helpers stall behind background workers.
+                            Conversely, compiling out all string hints (<b>Behavioral (w/o Hints)</b>) still discovers
+                            frame roots purely from wakeup periodicity and outperforms stock <b>EEVDF</b>.
+                        </p>
+                    </div>
+                    <img src="assets/figures/ablation.svg" alt="Component Ablation of scx_fcp" width="95%">
+                    <p class="is-size-7 has-text-centered">
+                        Component ablation of <b>scx_fcp</b> across Mean, <i>p</i><sub>95</sub>, and
+                        <i>p</i><sub>99</sub> latency: (1) Hints Only (w/o Token), (2) w/o Fan-Out Cap, (3) Behavioral
+                        (w/o Hints), and (4) <b>scx_fcp</b> (Full).
+                    </p>
+
+                    <br>
+                    <br>
+
+                    <div class="content has-text-justified">
+                        <p>
+                            <b>In-Kernel Proxy Execution vs. Bounded Wakeup-Token Propagation.</b> Linux Proxy Execution
+                            resolves priority inversion only when a task blocks on an in-kernel sleeping lock (struct
+                            mutex / rt_mutex), such as buffer fences inside Swap Buffers. However, upstream UI pipeline
+                            stages hand off work across waitqueues (futex, epoll, Binder) with no shared kernel mutex.
+                            Moreover, under heavy contention, walking blocked mutex chains boosts background lock
+                            holders onto big cores, causing false-boosting tail regressions on waitqueue-bound workloads
+                            (List View Fling and High-Hitrate Text). <b>scx_fcp</b> propagates bounded tokens across
+                            waitqueue wakeup edges while capping fan-out, cutting pre-swap Wakeup-DAG latency by 38.4%
+                            and reducing the 90 Hz LITTLE-core trap rate from 80.69% to 0.14%.
+                        </p>
+                    </div>
+                    <img src="assets/figures/eval_proxyexec.svg"
+                        alt="Proxy Execution vs Bounded Wakeup-Token Propagation" width="95%">
+                    <p class="is-size-7 has-text-centered">
+                        Comparison of <b>EEVDF w/ ProxyExec</b> and <b>scx_fcp</b> across (a) kernel-lock vs.
+                        waitqueue-DAG stages, (b) false-boosting <i>p</i><sub>99</sub> regressions on waitqueue-bound
+                        workloads, and (c) waitqueue stall rate (&ge; 12 ms) and 90 Hz LITTLE-core trap rate.
+                    </p>
+                </div>
+            </div>
         </div>
+    </section>
 
-        <img src="assets/figures/result.svg" alt="JankBench frame-latency results">
-        <p class="figure-caption">
-          Primary JankBench results. (a) Grouped bars compare five-run median frame latency across
-          mean, p50, p95, and p99; bars within each cluster correspond to the compared schedulers.
-          The dashed red line marks the 16.7 ms deadline over the percentile clusters. (b)
-          Over-deadline frames are shown separately in percent. F-N and F-B denote the named and
-          base builds.
-        </p>
+    <section class="section">
+        <div class="container is-max-desktop">
+            <div class="columns is-centered has-text-centered">
+                <div class="column is-four-fifths">
+                    <h2 class="title is-3">Detailed Topology &amp; Hardware Evaluations</h2>
 
-        <img src="assets/figures/ablation.svg" alt="Criticality-path ablation">
-        <p class="figure-caption">
-          Criticality-path ablation. Bars show the three-run median mean, p95, and p99 frame
-          duration for EEVDF, scx_fcp-base, and a build with criticality and inference disabled.
-          Whiskers show the observed min&ndash;max across runs; red dashed lines mark the 16.7 ms
-          deadline in the percentile panels.
-        </p>
+                    <div class="content has-text-justified">
+                        <p>
+                            <b>1. Multi-Core Scaling (4 / 8 / 16 / 32 vCPUs) &amp; Topology Comparison.</b> Across 400
+                            scaling trials (10 runs per cell) on the 90 Hz 4-stage rendering pipeline and across both
+                            asymmetric (446 : 1024) and symmetric (1024 : 1024) <b>JankBench</b> topologies,
+                            <b>scx_fcp</b> consistently maintains 98.8%&ndash;100% high-capacity core residency and
+                            sub-budget <i>p</i><sub>99</sub> tail latency.
+                        </p>
+                    </div>
+                    <img src="assets/figures/eval_pipeline.svg" alt="Multi-core scaling across 4, 8, 16, and 32 vCPUs"
+                        width="90%">
+                    <br>
+                    <br>
+                    <img src="assets/figures/eval_jankbench.svg"
+                        alt="AOSP JankBench asymmetric and symmetric breakdown" width="90%">
 
-        <h3 class="title is-4">Additional measurements</h3>
-        <div class="content has-text-justified">
-          <p>
-            Earlier evaluation snapshot from the development tree, kept for reference alongside the
-            focused results above.
-          </p>
+                    <br>
+                    <br>
+                    <br>
+
+                    <div class="content has-text-justified">
+                        <p>
+                            <b>2. Stage-Level FrameMetrics &amp; AOSP UiBenchJankTests.</b> Stage-level
+                            <i>p</i><sub>95</sub> decomposition across Unknown Delay, Animation, Draw, Command Issue,
+                            and Swap Buffers confirms that <b>scx_fcp</b> eliminates both waitqueue dispatch delays and
+                            render-thread stalls across asymmetric and symmetric topologies, achieving the lowest
+                            weighted <i>p</i><sub>99</sub> latency on <b>UiBenchJankTests</b> (9.33 ms asymmetric, 9.12
+                            ms symmetric).
+                        </p>
+                    </div>
+                    <img src="assets/figures/eval_framemetrics.svg" alt="AOSP FrameMetrics stage-level p95 breakdown"
+                        width="90%">
+                    <br>
+                    <br>
+                    <img src="assets/figures/eval_uibench.svg"
+                        alt="AOSP UiBenchJankTests asymmetric and symmetric percentiles" width="90%">
+
+                    <br>
+                    <br>
+                    <br>
+
+                    <div class="content has-text-justified">
+                        <p>
+                            <b>3. Full Physical Qualcomm SA8155P SoC Evaluation &amp; In-Kernel eBPF Overhead.</b> We
+                            deploy the identical benchmark suite on a physical 8-core tri-cluster Qualcomm Snapdragon
+                            Automotive SA8155P SoC (4&times; Kryo 485 Silver at 444 capacity + 3&times; Gold at 902 +
+                            1&times; Prime at 1024, Android 14, Linux 6.1.145). Across 10 repetitions (<i>n</i> = 10 runs
+                            per policy, 259,201 total frames) of AOSP <b>JankBench</b> on SA8155P, <b>scx_fcp</b> reduces
+                            Fling mean frame latency by 73.1% over <b>EEVDF</b> (3.203 &plusmn; 0.105 ms vs. 11.913
+                            &plusmn; 3.052 ms; 3.561 ms vs. 14.732 ms across all 8 workloads), 59.7% over
+                            <b>scx_p2dq</b> (7.947 &plusmn; 0.819 ms), and 82.2% over <b>scx_lavd</b> (17.985 &plusmn;
+                            0.682 ms), cutting jank from 6.71% &plusmn; 4.16% (<b>EEVDF</b>) down to 0.03% &plusmn; 0.01%
+                            (a 209&times; reduction). Across 10 repetitions (<i>n</i> = 10 runs per policy, 129,321 total
+                            frames) of AOSP <b>UiBenchJankTests</b> on SA8155P, <b>scx_fcp</b> and <b>scx_fcp (w/o
+                            Hints)</b> reduce weighted <i>p</i><sub>99</sub> latency from 28.24 &plusmn; 3.27 ms
+                            (<b>EEVDF</b>) and 35.67 &plusmn; 4.45 ms (<b>scx_lavd</b>) down to 12.13 &plusmn; 1.57 ms
+                            and 11.08 &plusmn; 1.76 ms (0.03%&ndash;0.05% jank), while eliminating the EAS PELT decay
+                            trap (77.5%&ndash;79.5% Gold+Prime stage residency across 150 60/90/120 Hz pipeline runs vs.
+                            0.19%&ndash;1.07% under <b>EEVDF</b>).
+                        </p>
+                    </div>
+                    <img src="assets/figures/eval_physical.svg"
+                        alt="Full Physical Qualcomm SA8155P SoC Evaluation across JankBench, FrameMetrics, UiBenchJankTests, and Tri-Cluster Residency"
+                        width="95%">
+                    <br>
+                    <br>
+                    <br>
+                    <div class="content has-text-justified">
+                        <p>
+                            <b>4. Complete Side-by-Side Quantitative Tables (32-vCPU Cuttlefish &amp; Physical SA8155P, <i>n</i> = 10 Runs + eBPF Overhead).</b>
+                            The tables below report all 10-repetition (<i>n</i> = 10) statistics (Mean &plusmn; SD, <i>p</i><sub>50</sub>, <i>p</i><sub>95</sub>, <i>p</i><sub>99</sub> &plusmn; SD, Jank %), all 8 <b>JankBench</b> workloads, <b>FrameMetrics</b> stage-level <i>p</i><sub>95</sub>, all 6 <b>UiBenchJankTests</b> workloads, 60/90/120 Hz pipeline cluster residency, and in-kernel eBPF overhead (total CPU seconds and nanoseconds per callback) across both platforms:
+                        </p>
+                        <div class="table-container">
+                            <table class="table is-bordered is-striped is-narrow is-hoverable is-fullwidth" style="font-size: 0.78rem;">
+                                <thead>
+                                    <tr>
+                                        <th>Platform &amp; Suite</th>
+                                        <th>Metric / Workload</th>
+                                        <th>EEVDF</th>
+                                        <th>EEVDF w/ ProxyExec</th>
+                                        <th>scx_p2dq</th>
+                                        <th>scx_lavd</th>
+                                        <th>scx_fcp (w/o Hints)</th>
+                                        <th>scx_fcp (Full, Ours)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td rowspan="5"><b>32-vCPU Cuttlefish</b><br>(Asymmetric 446:1024,<br>Linux 6.12.74 / 7.2.0-rc9)</td>
+                                        <td><b>JankBench 10-Run Fling (<i>n</i>=10): Mean&plusmn;SD / <i>p</i><sub>95</sub> / <i>p</i><sub>99</sub> / Jank</b></td>
+                                        <td>3.73&plusmn;0.45 / 4.13 / 21.95 / 0.76%</td>
+                                        <td><b>2.57&plusmn;0.39</b> / <b>3.79</b> / 9.98 / <b>0.39%</b></td>
+                                        <td>2.66&plusmn;0.38 / 5.29 / 10.71 / 0.42%</td>
+                                        <td>2.88&plusmn;0.57 / 6.08 / <b>9.70</b> / 0.48%</td>
+                                        <td>2.84&plusmn;0.48 / 8.60 / 14.22 / 0.50%</td>
+                                        <td>2.76&plusmn;0.43 / 5.25 / 13.23 / 0.48%</td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>JankBench All 8 Tests: Mean / <i>p</i><sub>95</sub> / <i>p</i><sub>99</sub> / &ge;12 ms / Jank</b></td>
+                                        <td>7.59 / 22.41 / 39.03 / 17.85% / 4.67%</td>
+                                        <td>5.66 / 19.99 / <b>21.06</b> / 14.77% / 0.47%</td>
+                                        <td>27.23 / 48.14 / 63.94 / 69.18% / 45.23%</td>
+                                        <td>5.31 / 23.15 / 23.59 / 6.43% / <b>0.29%</b></td>
+                                        <td>5.25 / <b>16.50</b> / 24.12 / 6.12% / 0.61%</td>
+                                        <td><b>4.23</b> / 17.11 / 22.65 / <b>5.86%</b> / 0.40%</td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>JankBench eBPF Overhead: Total CPU (s) / Callback Cost (ns/call)</b></td>
+                                        <td>N/A (In-Kernel)</td>
+                                        <td>N/A (In-Kernel)</td>
+                                        <td>71.40 s / 1,225.1 ns/call</td>
+                                        <td>76.12 s / 487.6 ns/call</td>
+                                        <td><b>39.42 s / 108.9 ns/call</b></td>
+                                        <td><b>43.18 s / 113.4 ns/call</b></td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>UiBenchJankTests (<i>n</i>=10): <i>p</i><sub>50</sub> / <i>p</i><sub>95</sub> / <i>p</i><sub>99</sub>&plusmn;SD / Jank</b></td>
+                                        <td>6.79 / 8.90 / 10.45&plusmn;1.82 / 0.13%</td>
+                                        <td>5.00 / 5.20 / 6.55&plusmn;1.79 / 0.12%</td>
+                                        <td>5.00 / 5.00 / <b>6.19&plusmn;1.99</b> / <b>0.08%</b></td>
+                                        <td>5.00 / 7.15 / 10.95&plusmn;8.99 / 0.49%</td>
+                                        <td>5.67 / 7.84 / 11.27&plusmn;10.96 / 0.38%</td>
+                                        <td><b>5.00</b> / <b>6.60</b> / 8.59&plusmn;2.97 / 0.18%</td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>UiBenchJankTests eBPF Overhead: Total CPU (s) / Callback Cost (ns/call)</b></td>
+                                        <td>N/A (In-Kernel)</td>
+                                        <td>N/A (In-Kernel)</td>
+                                        <td>24.14 s / 1,149.7 ns/call</td>
+                                        <td>24.82 s / 500.1 ns/call</td>
+                                        <td><b>10.32 s / 104.2 ns/call</b></td>
+                                        <td><b>13.06 s / 112.3 ns/call</b></td>
+                                    </tr>
+                                    <tr>
+                                        <td rowspan="6"><b>Physical SA8155P SoC</b><br>(4&times;444 : 3&times;902 : 1&times;1024,<br>Android 14, Linux 6.1.145)</td>
+                                        <td><b>JankBench 10-Run Fling (<i>n</i>=10): Mean&plusmn;SD / <i>p</i><sub>95</sub> / <i>p</i><sub>99</sub> / Jank</b></td>
+                                        <td>11.91&plusmn;3.05 / 28.34 / 33.35 / 6.71%</td>
+                                        <td rowspan="6"><i>N/A (Linux 6.12+ feature)</i></td>
+                                        <td>7.95&plusmn;0.82 / 17.11 / 23.86 / 1.29%</td>
+                                        <td>17.99&plusmn;0.68 / 33.81 / 41.55 / 20.58%</td>
+                                        <td>3.44&plusmn;0.40 / 4.89 / 10.34 / 0.44%</td>
+                                        <td><b>3.20&plusmn;0.11 / 4.44 / 7.63 / 0.03%</b></td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>JankBench All 8 Tests: Mean / <i>p</i><sub>95</sub> / <i>p</i><sub>99</sub> / &ge;12 ms / Jank</b></td>
+                                        <td>14.73 / 34.29 / 34.63 / 56.59% / 12.97%</td>
+                                        <td>10.55 / 17.96 / 18.08 / 39.18% / 0.17%</td>
+                                        <td>19.29 / 34.64 / 39.46 / 79.32% / 22.59%</td>
+                                        <td>3.81 / <b>5.85</b> / <b>7.90</b> / 0.10% / <b>0.03%</b></td>
+                                        <td><b>3.56</b> / 5.86 / 8.07 / <b>0.09%</b> / <b>0.03%</b></td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>JankBench eBPF Overhead: Total CPU (s) / Callback Cost (ns/call)</b></td>
+                                        <td>N/A (In-Kernel)</td>
+                                        <td><b>6.83 s / 598.2 ns/call</b></td>
+                                        <td>18.39 s / 935.4 ns/call</td>
+                                        <td>8.65 s / 768.8 ns/call</td>
+                                        <td>8.91 s / 876.8 ns/call</td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>UiBenchJankTests (<i>n</i>=10): <i>p</i><sub>50</sub> / <i>p</i><sub>95</sub> / <i>p</i><sub>99</sub>&plusmn;SD / Jank</b></td>
+                                        <td>14.39 / 25.24 / 28.24&plusmn;3.27 / 1.06%</td>
+                                        <td>12.55 / 18.02 / 20.85&plusmn;2.60 / 0.54%</td>
+                                        <td>17.69 / 28.53 / 35.67&plusmn;4.45 / 1.84%</td>
+                                        <td><b>5.25 / 9.15 / 11.08&plusmn;1.76 / 0.03%</b></td>
+                                        <td>5.30 / 10.66 / 12.13&plusmn;1.57 / 0.05%</td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>UiBenchJankTests eBPF Overhead: Total CPU (s) / Callback Cost (ns/call)</b></td>
+                                        <td>N/A (In-Kernel)</td>
+                                        <td><b>4.81 s / 594.3 ns/call</b></td>
+                                        <td>8.27 s / 904.6 ns/call</td>
+                                        <td>5.97 s / 854.6 ns/call</td>
+                                        <td>6.07 s / 784.5 ns/call</td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>60 / 90 / 120 Hz Pipeline (<i>n</i>=10): High-Capacity (Gold+Prime) Residency</b></td>
+                                        <td>0.19% / 0.24% / 1.07%</td>
+                                        <td>30.11% / 30.76% / 17.83%</td>
+                                        <td>0.57% / 0.68% / 1.33%</td>
+                                        <td>73.51% / 77.62% / 73.64%</td>
+                                        <td><b>77.50% / 78.36% / 79.54%</b></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <img src="assets/figures/eval_overhead.svg"
+                        alt="In-kernel eBPF CPU time and callback execution cost" width="90%">
+                </div>
+            </div>
         </div>
+    </section>
 
-        <div class="columns is-multiline">
-          <div class="column is-half has-text-centered">
-            <img src="assets/figures/eval_jankbench.svg" alt="JankBench frame-latency summaries">
-            <p class="figure-caption">
-              AOSP JankBench frame-latency summaries on 32-vCPU Cuttlefish. Panels (a,b) show
-              aggregate mean and percentiles on the asymmetric and symmetric topologies; panels
-              (c,d) show per-workload p95 for List, Image, and Shadow Grid Fling.
-            </p>
-          </div>
-          <div class="column is-half has-text-centered">
-            <img src="assets/figures/eval_framemetrics.svg" alt="FrameMetrics stage-latency summaries">
-            <p class="figure-caption">
-              AOSP FrameMetrics stage-latency summaries on 32-vCPU Cuttlefish. Panels (a) and (b)
-              show the asymmetric and symmetric configurations; markers are stage-level p95
-              summaries.
-            </p>
-          </div>
-          <div class="column is-half has-text-centered">
-            <img src="assets/figures/eval_physical.svg" alt="Physical device and Cuttlefish latency">
-            <p class="figure-caption">
-              Latency and stage-end CPU samples on the physical ARM64 device and Cuttlefish:
-              physical-device p99 by refresh rate, stage-end shares across Silver, Gold, and Prime
-              cores, and Cuttlefish p99 at 60 and 120 Hz.
-            </p>
-          </div>
-          <div class="column is-half has-text-centered">
-            <img src="assets/figures/eval_pipeline.svg" alt="Synthetic CPU/futex pipeline results">
-            <p class="figure-caption">
-              CPU/futex pipeline with a 90-Hz release target on two Cuttlefish configurations:
-              p99, the fraction above 11.11 ms, and upper-cluster stage-end samples.
-            </p>
-          </div>
-          <div class="column is-half has-text-centered">
-            <img src="assets/figures/eval_uibench.svg" alt="UiBenchJankTests latency">
-            <p class="figure-caption">
-              Frame-weighted latency percentiles from AOSP UiBenchJankTests. The plotted values are
-              reported percentile summaries, not a CDF or a reconstruction of per-frame samples.
-            </p>
-          </div>
-          <div class="column is-half has-text-centered">
-            <img src="assets/figures/eval_overhead.svg" alt="eBPF callback cost">
-            <p class="figure-caption">
-              Measured eBPF callback cost in the reported AOSP workloads. EEVDF is omitted because
-              its scheduling path executes in kernel C rather than through an eBPF callback.
-            </p>
-          </div>
+    <section class="section" id="BibTeX">
+        <div class="container is-max-desktop content">
+            <h2 class="title">BibTeX</h2>
+            <pre><code>@article{huynhpham2026scxfcp,
+  title   = {scx\_fcp: Bounded Frame-Context Token Propagation for Heterogeneous Android UI Pipelines in sched\_ext},
+  author  = {Huynh-Pham, Nhat-Trieu},
+  year    = {2026},
+  note    = {Linux sched\_ext / Android Systems Research}
+}</code></pre>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<section class="section" id="repositories">
-  <div class="container is-max-desktop">
-    <h2 class="title is-3 has-text-centered">Repositories</h2>
-    <div class="columns is-centered">
-      <div class="column is-half has-text-centered">
-        <a class="button is-medium is-link is-rounded" href="https://github.com/trieu1162000/scx_fcp"
-           target="_blank" rel="noopener">
-          <span class="icon"><i class="fab fa-github"></i></span>
-          <span>scx_fcp</span>
-        </a>
-        <p class="figure-caption has-text-centered">
-          Scheduler source, setup guide, and benchmark harness.
-        </p>
-      </div>
-      <div class="column is-half has-text-centered">
-        <a class="button is-medium is-link is-rounded" href="https://github.com/trieu1162000/scx-6.1"
-           target="_blank" rel="noopener">
-          <span class="icon"><i class="fab fa-github"></i></span>
-          <span>scx-6.1</span>
-        </a>
-        <p class="figure-caption has-text-centered">
-          Android 6.1 sched_ext backport with the scx_lavd, scx_p2dq, and scx_fcp builds.
-        </p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<footer class="footer">
-  <div class="container">
-    <div class="content has-text-centered">
-      <a class="icon-link" href="https://github.com/trieu1162000/scx_fcp" target="_blank" rel="noopener">
-        <i class="fab fa-github"></i>
-      </a>
-    </div>
-    <div class="columns is-centered">
-      <div class="column is-8">
-        <div class="content">
-          <p>
-            This website is licensed under a
-            <a rel="license" target="_blank"
-               href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons
-              Attribution-ShareAlike 4.0 International License</a>.
-          </p>
-          <p>
-            Page layout follows the
-            <a target="_blank" href="https://github.com/nerfies/nerfies.github.io">Nerfies</a>
-            template, as used by
-            <a target="_blank" href="https://dwzhu-pku.github.io/PaperBanana/">PaperBanana</a>.
-          </p>
+    <footer class="footer">
+        <div class="container">
+            <div class="content has-text-centered">
+                <a class="icon-link" target="_blank"
+                    href="https://github.com/trieu1162000/scx_fcp/blob/main/paper/main.pdf">
+                    <i class="fas fa-file-pdf"></i>
+                </a>
+                <a class="icon-link" href="https://github.com/trieu1162000/scx_fcp" target="_blank"
+                    class="external-link">
+                    <i class="fab fa-github"></i>
+                </a>
+            </div>
+            <div class="columns is-centered">
+                <div class="column is-8">
+                    <div class="content">
+                        <p>
+                            This website is licensed under a <a rel="license" target="_blank"
+                                href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+                                Commons Attribution-ShareAlike 4.0 International License</a>.
+                        </p>
+                        <p>
+                            This means you are free to borrow the <a target="_blank"
+                                href="https://github.com/nerfies/nerfies.github.io">source code</a> of this website,
+                            we just ask that you link back to this page in the footer.
+                        </p>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  </div>
-</footer>
+    </footer>
 
 </body>
+
 </html>
