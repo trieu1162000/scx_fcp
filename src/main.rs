@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 //
-// scx_fcp: Frame Critical-Path & Thermal-Debt Heterogeneous Scheduler
-// Userspace loader, asymmetric big.LITTLE topology configurator, and telemetry loop.
+// scx_fcp: behavioral frame-root and critical-path token scheduler
+// Userspace loader, big.LITTLE topology configurator, and counters loop.
 
 mod bpf_skel;
 pub use bpf_skel::*;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use libbpf_rs::{MapCore, MapFlags, OpenObject};
 use log::info;
@@ -30,7 +30,7 @@ use scx_utils::uei_report;
 #[derive(Debug, Parser)]
 #[command(
     name = "scx_fcp",
-    about = "Frame Critical-Path & Thermal-Debt Heterogeneous sched_ext scheduler for Android big.LITTLE SoCs"
+    about = "Behavioral frame-root and critical-path token sched_ext scheduler for Android big.LITTLE SoCs"
 )]
 struct Opts {
     /// Frame budget in microseconds (default 16667us = 60Hz, use 8333us for 120Hz).
@@ -49,15 +49,11 @@ struct Opts {
     #[clap(short = 'b', long, default_value = "6000")]
     slice_bg_us: u64,
 
-    /// Thermal debt cap (0..2048) before spilling from big cores.
-    #[clap(short = 't', long, default_value = "850")]
-    thermal_debt_cap: u64,
-
     /// Comma-separated list of big/Prime CPU IDs (if omitted, reads cpu_capacity or defaults to top half of CPUs).
     #[clap(long, default_value = "")]
     big_cpus: String,
 
-    /// Comma-separated list of PIDs/TGIDs to register as explicit Frame Pipeline Roots.
+    /// Comma-separated list of thread IDs to register as explicit frame roots. Disabled in the zero-hint build.
     #[clap(long, default_value = "")]
     frame_pids: String,
 
@@ -69,10 +65,9 @@ struct Opts {
     pub libbpf: LibbpfOpts,
 }
 
-fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u8>, Vec<u64>) {
+fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u8>) {
     let mut caps = vec![1024u64; nr_cpus];
     let mut is_big = vec![0u8; nr_cpus];
-    let mut dyn_power = vec![256u64; nr_cpus];
 
     let mut has_asymmetric_sysfs = false;
     let mut min_cap = u64::MAX;
@@ -98,7 +93,6 @@ fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u
         for cpu in 0..nr_cpus {
             caps[cpu] = 446;
             is_big[cpu] = 0;
-            dyn_power[cpu] = 140;
         }
         for tok in big_cpus_arg.split(',') {
             if let Ok(c) = tok.trim().parse::<usize>()
@@ -106,19 +100,12 @@ fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u
             {
                 caps[c] = 1024;
                 is_big[c] = 1;
-                dyn_power[c] = 520;
             }
         }
     } else if has_asymmetric_sysfs {
         let threshold = (min_cap + max_cap) / 2;
         for cpu in 0..nr_cpus {
-            if caps[cpu] >= threshold {
-                is_big[cpu] = 1;
-                dyn_power[cpu] = (caps[cpu] * 520) / 1024;
-            } else {
-                is_big[cpu] = 0;
-                dyn_power[cpu] = (caps[cpu] * 320) / 1024;
-            }
+            is_big[cpu] = if caps[cpu] >= threshold { 1 } else { 0 };
         }
     } else {
         // Default big.LITTLE partition on symmetric VMs (e.g. 4-vCPU Cuttlefish: CPUs 0..N/2 LITTLE, N/2..N big)
@@ -127,35 +114,24 @@ fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u
             if cpu >= split {
                 caps[cpu] = 1024;
                 is_big[cpu] = 1;
-                dyn_power[cpu] = 520;
             } else {
                 caps[cpu] = 446;
                 is_big[cpu] = 0;
-                dyn_power[cpu] = 140;
             }
         }
     }
 
-    (caps, is_big, dyn_power)
-}
-
-fn read_thermal_pressure() -> u64 {
-    // Poll /sys/class/thermal/thermal_zone*/temp if available
-    for zone in 0..4 {
-        let path = format!("/sys/class/thermal/thermal_zone{}/temp", zone);
-        if let Ok(s) = fs::read_to_string(&path)
-            && let Ok(temp_mc) = s.trim().parse::<i64>()
-        {
-            if temp_mc >= 80000 {
-                return ((temp_mc - 75000) / 250) as u64;
-            }
-        }
-    }
-    0
+    (caps, is_big)
 }
 
 fn main() -> Result<()> {
     let opts = Opts::parse();
+
+    if option_env!("SCX_FCP_BUILD_PROFILE") == Some("zero-hint")
+        && !opts.frame_pids.trim().is_empty()
+    {
+        bail!("--frame-pids is disabled in the zero-hint build");
+    }
 
     simplelog::TermLogger::init(
         simplelog::LevelFilter::Info,
@@ -166,12 +142,11 @@ fn main() -> Result<()> {
 
     try_set_rlimit_infinity();
 
-    let nr_cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
+    let nr_cpus = libbpf_rs::num_possible_cpus()
+        .unwrap_or(8)
         .min(fcp_consts_MAX_CPUS as usize);
 
-    let (caps, is_big, dyn_power) = detect_cpu_capacities(nr_cpus, &opts.big_cpus);
+    let (caps, is_big) = detect_cpu_capacities(nr_cpus, &opts.big_cpus);
 
     let mut open_object = MaybeUninit::<OpenObject>::uninit();
     let skel_builder = BpfSkelBuilder::default();
@@ -184,12 +159,10 @@ fn main() -> Result<()> {
         rodata.slice_crit_ns = opts.slice_crit_us * 1000;
         rodata.slice_intr_ns = opts.slice_intr_us * 1000;
         rodata.slice_bg_ns = opts.slice_bg_us * 1000;
-        rodata.thermal_debt_cap = opts.thermal_debt_cap;
 
         for cpu in 0..nr_cpus {
             rodata.cpu_capacity[cpu] = caps[cpu];
             rodata.is_big_core[cpu] = is_big[cpu];
-            rodata.cpu_dyn_power[cpu] = dyn_power[cpu];
         }
     }
 
@@ -231,21 +204,50 @@ fn main() -> Result<()> {
         ticks += 1;
 
         if let Some(bss) = skel.maps.bss_data.as_mut() {
-            bss.userspace_thermal_pressure = read_thermal_pressure();
-
             if opts.stats_interval_s > 0 && (ticks % (opts.stats_interval_s * 10) == 0) {
                 info!(
-                    "[scx_fcp] crit={} intr={} bg={} tokens_issued={} tokens_inherited={} preempt_kicks={} big={} little={} therm_spills={} rescues={}",
+                    "[scx_fcp] crit={} intr={} bg={} big={} little={} preempt_kicks={} rescues={}",
                     bss.stat_crit_dispatches,
                     bss.stat_intr_dispatches,
                     bss.stat_bg_dispatches,
-                    bss.stat_fcp_tokens_issued,
-                    bss.stat_fcp_tokens_inherited,
-                    bss.stat_preempt_kicks,
                     bss.stat_big_core_placements,
                     bss.stat_little_core_placements,
-                    bss.stat_thermal_spills,
+                    bss.stat_preempt_kicks,
                     bss.stat_starvation_rescues,
+                );
+                info!(
+                    "[scx_fcp] roots beh={} comm={} pid={} prom={} demote={} suppressed={} token_sel={} token_enq={}",
+                    bss.stat_root_src_behavior,
+                    bss.stat_root_src_comm,
+                    bss.stat_root_src_pid,
+                    bss.stat_root_promotions,
+                    bss.stat_root_demotions,
+                    bss.stat_root_downstream_suppressed,
+                    bss.stat_token_select_calls,
+                    bss.stat_token_enqueue_calls,
+                );
+                info!(
+                    "[scx_fcp] token issued={} inherited={} edges elig={} inh={} sync={} tgid={} async_rej={} depth_block={} revoke={} expire={} first_big={}/{} depth_hist={:?}",
+                    bss.stat_fcp_tokens_issued,
+                    bss.stat_fcp_tokens_inherited,
+                    bss.stat_edges_eligible,
+                    bss.stat_edges_inherited,
+                    bss.stat_edges_sync_flag,
+                    bss.stat_edges_same_tgid,
+                    bss.stat_edges_async_rejected,
+                    bss.stat_depth_regress_blocked,
+                    bss.stat_token_revocations,
+                    bss.stat_token_expiry,
+                    bss.stat_first_big_hits,
+                    bss.stat_first_big_misses,
+                    bss.stat_depth_hist,
+                );
+                info!(
+                    "[scx_fcp] tune cooldown_blocks={} edge_budget_rej={} tgid_window_rej={} kick_capped={}",
+                    bss.stat_root_cooldown_blocks,
+                    bss.stat_edges_budget_rejected,
+                    bss.stat_edges_tgid_window_rejected,
+                    bss.stat_preempt_kick_capped,
                 );
             }
         }
