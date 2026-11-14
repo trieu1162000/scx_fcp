@@ -123,7 +123,7 @@ fan-out cap).
 
 | Target | Kernel / ABI | Architecture | Repository |
 | :--- | :--- | :---: | :--- |
-| **Android Cuttlefish** (`4/8/16/32` vCPUs) | Android GKI `6.12` / `6.18` / mainline `7.2` | `x86_64` | This repository (`scx_fcp` + `scx`) |
+| **Android Cuttlefish** (`4/8/16/32` vCPUs) | Android 16 GKI `6.12.74` (prebuilt `boot.img`) & mainline `7.2.0-rc9` | `x86_64` | This repository (`scx_fcp` + `scx`) |
 | **Qualcomm SA8155P** (`4+3+1` Kryo 485) | Android 14 GKI `6.1.145` + `sched_ext` backport | `aarch64` | [`trieu1162000/scx-6.1`](https://github.com/trieu1162000/scx-6.1) |
 
 ## Options

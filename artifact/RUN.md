@@ -21,7 +21,7 @@ export SERIAL=127.0.0.1:6520 # or 0.0.0.0:6520
 
 ## Overview
 
-This document covers launching Android 17 Cuttlefish across **4, 8, 16, and 32 vCPUs** (`Symmetric` and `Asymmetric` `446:1024` topologies) and running:
+This document covers launching Android Cuttlefish across **4, 8, 16, and 32 vCPUs** (`Symmetric` and `Asymmetric` `446:1024` topologies) and running:
 1. the 10-run multi-core scaling evaluation on `fcp_frame_bench` (Table 1);
 2. the full 8-benchmark AOSP `JankBench` suite (`BM_ID=0,1,2,3,4,5,6,7`, Table 2);
 3. the full 6-benchmark AOSP `UiBenchJankTests` suite (`6/6` passed, Table 3).
@@ -43,7 +43,7 @@ Required:
 
 ```text
 Linux host with KVM
-Android 17 Cuttlefish system image with sched_ext and BTF enabled
+Android Cuttlefish system image with sched_ext and BTF enabled
 16 vCPUs, 8192 MB guest RAM
 adb
 ```
@@ -73,69 +73,30 @@ CPUS=16 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
 CPUS=32 MEMORY_MB=8192 bash artifact/scripts/launch_cuttlefish.sh
 ```
 
-The launcher passes `-cpus=N -memory_mb=M` to `launch_cvd` and waits for adb.
-Then verify the guest framework and configure OpenGL ES + `animator_duration_scale 1`:
-
-```bash
-adb connect "$SERIAL"
-adb -s "$SERIAL" root
-adb -s "$SERIAL" shell setenforce 0
-
-adb -s "$SERIAL" shell setprop debug.hwui.renderer opengl
-adb -s "$SERIAL" shell settings put global animator_duration_scale 1
-
-adb -s "$SERIAL" shell 'service check activity'
-adb -s "$SERIAL" shell 'pidof system_server'
-adb -s "$SERIAL" shell 'pidof com.android.systemui'
-adb -s "$SERIAL" shell 'getprop sys.boot_completed'
-adb -s "$SERIAL" shell 'cat /sys/kernel/sched_ext/state'
-```
-
-Expected:
+`launch_cuttlefish.sh` passes `-cpus=N -memory_mb=M` to `launch_cvd`, connects
+over `adb` as `root`, waits for `sys.boot_completed=1` and the `activity`,
+`system_server`, and `com.android.systemui` services, sets `SELinux=Permissive`,
+`debug.hwui.renderer=opengl`, and `animator_duration_scale=1`, stages all built
+binaries from `artifact/build/bin/` into `/data/local/tmp/scx/`, and installs
+any workload APKs present in `artifact/workloads/`:
 
 ```text
-activity service: found
-system_server and SystemUI: non-empty
-boot_completed: 1
-sched_ext state: disabled
-SELinux: Permissive
+device ready: 127.0.0.1:6520
+  kernel:          6.12.74-android16-... (32 vCPUs)
+  activity:        Service activity: found
+  system_server:   <pid>
+  systemui:        <pid>
+  boot_completed:  1
+  sched_ext state: disabled
+  SELinux:         Permissive
 ```
 
-
-## 3. Push the frozen binaries and APKs
-
-The full-matrix driver pushes the scheduler binaries. Required files are in
-`BUILD.md`.
-
-Before starting:
-
-```bash
-ls -l \
-  artifact/workloads/JankBench.apk \
-  artifact/workloads/UiBench.apk \
-  artifact/workloads/UiBenchJankTests.apk
-```
-
-Use the fixed UiBench app:
-
-```text
-artifact/workloads/UiBench.apk
-```
-
-The scheduler binaries are:
-
-```text
-artifact/build/bin/scx_*
-```
-
-## 4. Smoke test
+## 3. Smoke test
 
 Run the smallest useful cell first:
 
 ```bash
-cd artifact
-SERIAL=0.0.0.0:6520 ADB=$HOME/bin/adb \
-  ./pipeline.sh smoke
+SERIAL=127.0.0.1:6520 ./artifact/pipeline.sh smoke
 ```
 
 Check:
@@ -147,7 +108,7 @@ cat "$OUT/jankbench/list-view-fling/validity.json"
 
 Do not start the full campaign until this cell is valid.
 
-## 5. Multi-core scaling benchmark (`fcp_frame_bench`, 4 / 8 / 16 / 32 vCPUs, 10 Runs)
+## 4. Multi-core scaling benchmark (`fcp_frame_bench`, 4 / 8 / 16 / 32 vCPUs, 10 Runs)
 
 For each vCPU configuration (`C` in `{4, 8, 16, 32}`), run 10 iterations per scheduler using the following setup:
 
@@ -158,34 +119,29 @@ For each vCPU configuration (`C` in `{4, 8, 16, 32}`), run 10 iterations per sch
 
 ```bash
 # Attach scx_fcp (default) or scx_fcp_behavioral (zero-hint):
-adb -s "$SERIAL" shell "cd /data/local/tmp/scx && nohup ./scx_fcp --big-cpus $BIG_LIST -f 11111 -s 0 >/dev/null 2>&1 &"
+adb -s "$SERIAL" shell "cd /data/local/tmp/scx && ulimit -l unlimited && SCX_STATS_BASE_PATH=/data/local/tmp/scx/stats nohup ./scx_fcp --big-cpus $BIG_LIST -f 11111 -s 0 >/dev/null 2>&1 </dev/null &"
 
 # Run 10 iterations of 90 Hz 4-stage fcp_frame_bench:
 adb -s "$SERIAL" shell "
   for r in \$(seq 1 10); do
     /data/local/tmp/scx/fcp_frame_bench --scheduler scx_fcp_${CPUS}c_${TOPO} \
-      --frames 60 --hz 90 --stages 4 --stage-us 1800 --bg-workers $BG_W
+      --frames 60 --hz 90 --stages 4 --stage-us 1800 --bg-workers $BG_W --big-cpus $BIG_LIST
   done
 "
 ```
 
-## 6. Full 14-test AOSP matrix (8 JankBench + 6 UiBenchJankTests)
+## 5. Full 14-test AOSP matrix (8 JankBench + 6 UiBenchJankTests)
 
 From the repository root:
 
 ```bash
-cd artifact
-
-export SERIAL=127.0.0.1:6520 # or 0.0.0.0:6520
+export SERIAL=127.0.0.1:6520
 export ADB=${ADB:-adb}
-export OUT=$PWD/results/full14_$(date +%Y%m%d-%H%M%S)
-
-# After the fixed UiBench APK is installed/recorded (use "none", not empty:
-# the current driver treats an unset/empty value as the old bitmap allowance):
+export OUT=$PWD/artifact/results/full14_$(date +%Y%m%d-%H%M%S)
 export UI_ALLOW_INVALID=none
 
 RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
-  ./pipeline.sh full --out "$OUT"
+  ./artifact/pipeline.sh full --out "$OUT"
 ```
 
 Defaults:
@@ -208,7 +164,7 @@ would restore `bitmap-upload`.)
 The driver supports cell-level resume:
 
 ```bash
-./pipeline.sh resume --out "$OUT"
+./artifact/pipeline.sh resume --out "$OUT"
 ```
 
 Resume skips cells that already have 10 valid units. Do not edit or delete
@@ -229,11 +185,10 @@ logcat event.
 Invalid attempts are moved to `_invalid/` and rerun. They remain visible in
 validity logs; they are never pooled.
 
-## 7. Aggregate and verify
+## 6. Aggregate and verify
 
 ```bash
-cd /path/to/scx_fcp/artifact
-./pipeline.sh analyze "$OUT" \
+./artifact/pipeline.sh analyze "$OUT" \
   --runs 10 --require-known-invalid \
   --out-dir "$OUT/integration"
 ```
@@ -257,7 +212,7 @@ full14_uibench.tex
 full14_website.html
 ```
 
-## 8. Cleanup
+## 7. Cleanup
 
 Stop schedulers and the device:
 
@@ -269,7 +224,7 @@ CF_HOME=${CF_HOME:?set the Cuttlefish host directory}
 HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd"
 ```
 
-## 10. Known limitations
+## 8. Known limitations
 
 - UiBench `bitmap-upload` requires the fixed app APK; the frozen AOSP app
   crashes before the first frame.

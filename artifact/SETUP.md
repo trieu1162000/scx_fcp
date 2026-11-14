@@ -1,14 +1,27 @@
 # Cuttlefish image and kernel setup
 
-## 1. Android Cuttlefish image and kernel (`6.12` / `6.18` / `7.2`)
+## 0. Host Cuttlefish packages and KVM / vhost permissions
 
-Use an `aosp_cf_x86_64_only_phone` (or `aosp_cf_x86_64_phone`) image from an
-AOSP build or Android CI:
+Ensure `cuttlefish-base`, `cuttlefish-user`, and KVM/`vhost_vsock` device
+permissions are active on the host before launching Cuttlefish:
+
+```bash
+sudo apt-get install -y cuttlefish-base cuttlefish-user iproute2
+sudo modprobe kvm_intel vhost_net vhost_vsock
+sudo usermod -aG kvm,cvdnetwork,render "$USER"
+sudo service cuttlefish-host-resources start
+sudo chmod 666 /dev/kvm /dev/vhost-vsock /dev/vhost-net /dev/net/tun
+```
+
+## 1. Prebuilt Cuttlefish image and `6.12.74-android16` kernel (No Kernel Rebuild Required)
+
+Download a prebuilt `aosp_cf_x86_64_only_phone` (or `aosp_cf_x86_64_phone`)
+image and `cvd-host_package.tar.gz` from Android CI:
 
 - Build grid: <https://ci.android.com/builds/branches/aosp-main/grid>
 - Cuttlefish getting started: <https://source.android.com/docs/devices/cuttlefish/get-started>
 
-Download and unpack the image and host package:
+Unpack into `CF_HOME`:
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
@@ -17,33 +30,45 @@ unzip aosp_cf_x86_64_only_phone-img-<build-id>.zip -d "$CF_HOME"
 tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"
 ```
 
-Required kernel configuration options for `sched_ext` + BTF:
+### Why the prebuilt `boot.img` (`6.12.74-android16`) works out of the box
+
+The prebuilt Cuttlefish `boot.img` carries Google's Android 16 GKI `6.12`
+kernel (`Linux 6.12.74-android16-6-g3ec022196c4e-ab15076761`), which **already
+compiles in `sched_ext` and BTF**:
 
 ```text
 CONFIG_BPF=y
 CONFIG_BPF_SYSCALL=y
 CONFIG_BPF_JIT=y
 CONFIG_DEBUG_INFO_BTF=y
+CONFIG_DEBUG_INFO_BTF_MODULES=y
 CONFIG_SCHED_CLASS_EXT=y
-CONFIG_EXT_GROUP_SCHED=y
-# CONFIG_SCHED_PROXY_EXEC is not set
+CONFIG_SCHED_PROXY_EXEC=y
 ```
 
-*(To evaluate stock `EEVDF + Proxy Execution`, boot the companion kernel built
-with `CONFIG_SCHED_PROXY_EXEC=y` and `CONFIG_SCHED_CLASS_EXT=n`.)*
+Because that prebuilt kernel also enables `CONFIG_SCHED_PROXY_EXEC=y`, booting
+it with `-extra_kernel_cmdline "sched_proxy_exec=0"` (which
+`artifact/scripts/launch_cuttlefish.sh` passes automatically) disables Proxy
+Execution at boot and allows `sched_ext` schedulers (`scx_fcp`, `scx_lavd`,
+`scx_p2dq`) and stock `EEVDF` to run directly on the prebuilt `boot.img`
+**without rebuilding the kernel**.
 
-## 2. Building a custom kernel and repacking `initramfs.img`
+*(To evaluate `EEVDF w/ ProxyExec`, boot the same prebuilt `boot.img` with
+`sched_proxy_exec=1`.)*
 
-When booting a custom Android mainline/GKI kernel (`bzImage`) against a
-Cuttlefish userspace image, repack the `virtual_device_x86_64` vendor ramdisk
-modules into `initramfs.img`:
+## 2. Optional: Building a custom Android mainline (`7.2.0-rc9`) kernel
+
+Rebuilding the kernel is only required if you want to evaluate against a custom
+Android mainline (`7.2.0-rc9-mainline`) kernel tree where
+`CONFIG_SCHED_CLASS_EXT=y` is not enabled by default:
 
 ```bash
-# 1. Build common + virtual-device modules with Bazel/Kleaf
+# 1. Enable CONFIG_SCHED_CLASS_EXT=y, CONFIG_DEBUG_INFO_BTF=y, CONFIG_SCHED_PROXY_EXEC=n
+#    and build common + virtual-device modules with Bazel/Kleaf:
 tools/bazel run //common-modules/virtual-device:virtual_device_x86_64_dist \
   -- --dist_dir=out/virtual_device_x86_64/dist
 
-# 2. Repack initramfs.img with the newly built kernel modules
+# 2. Repack initramfs.img with the newly built kernel modules:
 WORKDIR=$(mktemp -d)
 lz4 -d -c "$CF_HOME/initramfs.img" | (cd "$WORKDIR" && cpio -idm)
 rm -rf "$WORKDIR/lib/modules/"*
@@ -59,17 +84,12 @@ rm -rf "$WORKDIR"
 
 ```bash
 export CF_HOME=/path/to/cuttlefish
-export KERNEL=/path/to/bzImage
-export INITRAMFS=/path/to/initramfs.img
 export SERIAL=127.0.0.1:6520
 
+# Boot with the prebuilt 6.12.74-android16 boot.img (default):
 CPUS=32 MEMORY_MB=8192 artifact/scripts/launch_cuttlefish.sh
-```
 
-For Cuttlefish instances using `guest_swiftshader`, configure HWUI to use OpenGL
-ES and keep `ValueAnimator` duration scaling enabled (`1`):
-
-```bash
-adb -s "$SERIAL" shell setprop debug.hwui.renderer opengl
-adb -s "$SERIAL" shell settings put global animator_duration_scale 1
+# Or boot with a custom mainline bzImage + initramfs.img:
+KERNEL=/path/to/bzImage INITRAMFS=/path/to/initramfs.img \
+  CPUS=32 MEMORY_MB=8192 artifact/scripts/launch_cuttlefish.sh
 ```

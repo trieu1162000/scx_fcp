@@ -23,7 +23,7 @@ Every JankBench run is checked against J1-J12:
 J1   required files and consistency
 J2   policy/run/benchmark id/name/run_count
 J3   frame counts, iterations, DB/summary agreement
-J4   kernel, 16 vCPU, SDK, build, SELinux
+J4   kernel, vCPU count, SDK, build, SELinux
 J5   scheduler/app identity and state/ops
 J6   SystemUI/system_server/benchmark PID stability
 J7   logcat: injection, fatal, ANR, process death, sleep

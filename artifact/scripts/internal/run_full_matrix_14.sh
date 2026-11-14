@@ -47,11 +47,11 @@ JANK_ATTEMPTS=${JANK_ATTEMPTS:-5}
 UI_ATTEMPTS=${UI_ATTEMPTS:-3}
 OUT=${OUT:-$PAPER/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)}
 OLD=${OLD:-$ARTIFACT/build/bin/scx_fcp_behavioral}
-EXPECTED_OLD_SHA=5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4
 LAVD_BIN=$ARTIFACT/build/bin/scx_lavd
 P2DQ_BIN=$ARTIFACT/build/bin/scx_p2dq
-EXPECTED_LAVD_SHA=638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9
-EXPECTED_P2DQ_SHA=c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1
+EXPECTED_OLD_SHA=${EXPECTED_OLD_SHA:-$(awk '$2=="scx_fcp_behavioral"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$OLD" 2>/dev/null | awk '{print $1}')}
+EXPECTED_LAVD_SHA=${EXPECTED_LAVD_SHA:-$(awk '$2=="scx_lavd"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$LAVD_BIN" 2>/dev/null | awk '{print $1}')}
+EXPECTED_P2DQ_SHA=${EXPECTED_P2DQ_SHA:-$(awk '$2=="scx_p2dq"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$P2DQ_BIN" 2>/dev/null | awk '{print $1}')}
 BENCH_CFG=$PAPER/scripts/internal/jankbench_benchmarks.json
 UI_APK=$ARTIFACT/workloads/UiBench-app-debug.apk
 UI_TEST_APK=$ARTIFACT/workloads/UiBenchJankTests-debug.apk
@@ -189,9 +189,16 @@ PY
 
 write_matrix_json() {
   local dir=$1 bid=$2
+  local g_kernel g_nproc g_sdk g_build g_selinux
+  g_kernel=$(sh_ 'uname -r' || echo "6.12.74-android16")
+  g_nproc=$(sh_ 'nproc' || echo "32")
+  g_sdk=$(sh_ 'getprop ro.build.version.sdk' || echo "36")
+  g_build=$(sh_ 'getprop ro.build.description' || echo "aosp_cf_x86_64_phone-userdebug")
+  g_selinux=$(sh_ 'getenforce' || echo "Permissive")
   python3 - "$dir/matrix.json" "$BENCH_CFG" "$bid" "$RUN_COUNT" "$WARMUP_ITERATIONS" \
     "$POLICIES" "$EXPECTED_OLD_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
-    "$OUT/jankbench_app_sha256.txt" "$RUNS" <<'PY'
+    "$OUT/jankbench_app_sha256.txt" "$RUNS" \
+    "$g_kernel" "$g_nproc" "$g_sdk" "$g_build" "$g_selinux" <<'PY'
 import json, sys
 out, cfg_path, bid = sys.argv[1], sys.argv[2], sys.argv[3]
 run_count, warmup = int(sys.argv[4]), int(sys.argv[5])
@@ -221,11 +228,11 @@ report = {
     "run_count": run_count,
     "warmup_iterations": warmup,
     "runs_expected": runs,
-    "kernel": "6.18.33-cf618+",
-    "nproc": 16,
-    "sdk": 37,
-    "build": "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
-    "selinux": "Permissive",
+    "kernel": sys.argv[12] if len(sys.argv) > 12 and sys.argv[12] else "6.12.74-android16",
+    "nproc": int(sys.argv[13]) if len(sys.argv) > 13 and sys.argv[13].isdigit() else 32,
+    "sdk": int(sys.argv[14]) if len(sys.argv) > 14 and sys.argv[14].isdigit() else 36,
+    "build": sys.argv[15] if len(sys.argv) > 15 and sys.argv[15] else "aosp_cf_x86_64_phone-userdebug",
+    "selinux": sys.argv[16] if len(sys.argv) > 16 and sys.argv[16] else "Permissive",
 }
 json.dump(report, open(out, "w"), indent=2)
 open(out, "a").write("\n")

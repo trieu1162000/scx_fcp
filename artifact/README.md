@@ -19,7 +19,7 @@ paper's synthetic scaling (`fcp_frame_bench`), AOSP `JankBench`, AOSP
 
 | Step | Document | Contents |
 | :---: | :--- | :--- |
-| **1** | [`SETUP.md`](SETUP.md) | Host prerequisites, Android Cuttlefish image & kernel (`6.12` / `6.18` / `7.2`) setup, `initramfs.img` repacking, and `4/8/16/32`-vCPU launch |
+| **1** | [`SETUP.md`](SETUP.md) | Host prerequisites, Cuttlefish prebuilt image (`6.12.74-android16` `boot.img` with `sched_proxy_exec=0`), optional custom mainline `7.2` kernel build, and `4/8/16/32`-vCPU launch |
 | **2** | [`BUILD.md`](BUILD.md) | Building static `scx_fcp` profiles, baseline schedulers (`scx_lavd`, `scx_p2dq`), `fcp_frame_bench`, ARM64 cross-builds, and AOSP `JankBench` / `UiBench` APKs |
 | **3** | [`RUN.md`](RUN.md) | Running the `4/8/16/32`-vCPU synthetic scaling suite, the full 14-test AOSP matrix (`8` JankBench + `6` UiBench), standalone per-suite runners, and eBPF overhead collection |
 | **4** | [`VALIDATE.md`](VALIDATE.md) | Per-run validity gates (`J1–J12` for JankBench, `GfxMonitor` & process stability for UiBench) and LaTeX/JSON/HTML aggregation |

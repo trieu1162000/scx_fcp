@@ -50,10 +50,10 @@ EXPECTED = {
     "benchmark_id": 0,
     "run_count": 3,
     "finish_when_done": True,
-    "kernel": "6.18.33-cf618+",
-    "nproc": 16,
-    "sdk": 37,
-    "build": "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
+    "kernel": "6.12.74-android16-6-g3ec022196c4e-ab15076761",
+    "nproc": 32,
+    "sdk": 36,
+    "build": "aosp_cf_x86_64_only_phone-userdebug",
     "selinux": "Permissive",
     "app_sha256": "e4e521a3a6fa5c6a754fac9d4dcd9a5238c3c915af1dd84f1f086b12887974af",
     "min_total_frames": 4000,
@@ -128,7 +128,32 @@ POLICY_SPEC = OrderedDict([
 ])
 POLICY_ALIASES = {
     "scx_fcp_named": "scx_fcp_nh",
+    "scx_fcp_behavioral": "scx_fcp_v_a_depth3_tgid1ms",
 }
+
+def _load_built_sha256():
+    sha_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "build", "bin", "SHA256SUMS")
+    if not os.path.isfile(sha_file):
+        return
+    shas = {}
+    with open(sha_file, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 2:
+            shas[parts[1]] = parts[0]
+    mapping = {
+        "scx_lavd": "scx_lavd",
+        "scx_p2dq_pelt_off": "scx_p2dq",
+        "scx_fcp_zh": "scx_fcp",
+        "scx_fcp_nh": "scx_fcp_named",
+        "scx_fcp_v_a_depth3_tgid1ms": "scx_fcp_behavioral",
+    }
+    for pol, bin_name in mapping.items():
+        if bin_name in shas and pol in POLICY_SPEC:
+            POLICY_SPEC[pol]["sha256"] = shas[bin_name]
+
+_load_built_sha256()
 
 REQUIRED_FILES = ["manifest.json", "summary.json", "BenchmarkResults.db",
                   "frames.csv"]
@@ -1333,6 +1358,10 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
     if os.path.isfile(freeze_path):
         try:
             freeze_manifest = read_json(freeze_path)
+            if isinstance(freeze_manifest, dict):
+                for _k in ("kernel", "nproc", "sdk", "build", "selinux", "app_sha256"):
+                    if freeze_manifest.get(_k) is not None:
+                        expected[_k] = freeze_manifest[_k]
         except (OSError, json.JSONDecodeError):
             freeze_manifest = None
 

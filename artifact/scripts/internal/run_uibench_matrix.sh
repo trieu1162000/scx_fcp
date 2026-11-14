@@ -252,9 +252,9 @@ push_bins() {
   local base=${BINDIR:-$PAPER/build/bin}
   local tune=${SCX_TUNE_ROOT:-$PAPER/variants}
   local tuned_bin=${TUNED_BIN:-$tune/v_a_depth3_tgid1ms/bin/scx_fcp}
-  local want_tuned=${TUNED_SHA:-5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4}
-  local want_lavd=${LAVD_SHA:-638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9}
-  local want_p2dq=${P2DQ_SHA:-c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1}
+  local want_tuned=${TUNED_SHA:-$(awk '$2=="scx_fcp_behavioral"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo 5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4)}
+  local want_lavd=${LAVD_SHA:-$(awk '$2=="scx_lavd"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo 638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9)}
+  local want_p2dq=${P2DQ_SHA:-$(awk '$2=="scx_p2dq"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1)}
 
   [ -f "$tuned_bin" ] || die "tuned binary missing: $tuned_bin"
   local got
