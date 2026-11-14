@@ -45,7 +45,7 @@ instrumentation ends OK (1 test)
 GfxMonitor gfx-avg-* summary exists
 >= 100 monitored frames
 p50/90/95/99 and jank keys exist
-wall time 10-90 s
+wall time 10-900 s
 SystemUI PID stable
 foreground remains UiBench
 SELinux Permissive

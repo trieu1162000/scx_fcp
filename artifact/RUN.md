@@ -73,7 +73,6 @@ CPUS=16 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
 CPUS=32 MEMORY_MB=8192 bash artifact/scripts/launch_cuttlefish.sh
 ```
 
-TODO: This should be added to launch_cuttlefish.sh, shouldn't it?
 The launcher passes `-cpus=N -memory_mb=M` to `launch_cvd` and waits for adb.
 Then verify the guest framework and configure OpenGL ES + `animator_duration_scale 1`:
 
@@ -82,9 +81,8 @@ adb connect "$SERIAL"
 adb -s "$SERIAL" root
 adb -s "$SERIAL" shell setenforce 0
 
-TODO: check these or not?
-# adb -s "$SERIAL" shell setprop debug.hwui.renderer opengl
-# adb -s "$SERIAL" shell settings put global animator_duration_scale 1
+adb -s "$SERIAL" shell setprop debug.hwui.renderer opengl
+adb -s "$SERIAL" shell settings put global animator_duration_scale 1
 
 adb -s "$SERIAL" shell 'service check activity'
 adb -s "$SERIAL" shell 'pidof system_server'
@@ -106,7 +104,6 @@ SELinux: Permissive
 
 ## 3. Push the frozen binaries and APKs
 
-TODO: This shoud be added to launch_cuttlefish.sh, shouldn't it?
 The full-matrix driver pushes the scheduler binaries. Required files are in
 `BUILD.md`.
 

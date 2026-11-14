@@ -60,7 +60,7 @@ To build directly via `build_static.sh`:
 export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
 export ARTIFACT=${ARTIFACT:-$PWD/artifact}
 SCX_ROOT="$SCX_ROOT" BIN_DIR="$ARTIFACT/build/bin" \
-  "$ARTIFACT/scripts/internal/build_static.sh"
+  ./scripts/build_static.sh
 ```
 
 ## 3. JankBench APK
