@@ -6,7 +6,7 @@
 #
 # Usage:
 #   tests/uibench/run_uibench.sh -p eevdf -n 1
-#   tests/uibench/run_uibench.sh -p scx_fcp_behavioral -n 1 -r 3 \
+#   tests/uibench/run_uibench.sh -p scx_fcp_behavioral -n 1 -r 10 \
 #       --tests inflating-list,bitmap-upload
 #
 # Environment:
@@ -33,7 +33,7 @@ REMOTE=${REMOTE:-/data/local/tmp/scx}
 POLICY=${POLICY:-unlabeled}
 RUN=${RUN:-1}
 REPEATS=${REPEATS:-1}
-ITERATIONS=${ITERATIONS:-1}
+ITERATIONS=${ITERATIONS:-10}
 TAG=${TAG:-uibench}
 SHUFFLE=${SHUFFLE:-0}
 INSTALL=${INSTALL:-0}
@@ -80,7 +80,7 @@ TESTS=(
     "shadow-grid-list|com.android.uibench.janktests.UiBenchRenderingJankTests#testShadowGridListFling"
     "inflating-list|com.android.uibench.janktests.UiBenchJankTests#testInflatingListViewFling"
     "slow-bind-recycler|com.android.uibench.janktests.UiBenchJankTests#testSlowBindRecyclerViewFling"
-    "trivial-recycler|com.android.uibench.janktests.UiBenchJankTests#testTrivialRecyclerViewFling"
+    "trivial-recycler|com.android.uibench.janktests.UiBenchJankTests#testTrivialRecyclerListViewFling"
     "layout-cache-low|com.android.uibench.janktests.UiBenchTextJankTests#testLayoutCacheLowHitrateFling"
 )
 
@@ -180,11 +180,12 @@ ensure_awake() {
 
 prepare_device() {
     sh_ 'svc power stayon true' >/dev/null 2>&1 || true
+    sh_ "setprop debug.hwui.renderer opengl" >/dev/null 2>&1 || true
     sh_ 'settings put global stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
     sh_ 'settings put system screen_off_timeout 2147483647' >/dev/null 2>&1 || true
     sh_ 'settings put global window_animation_scale 0' >/dev/null 2>&1 || true
     sh_ 'settings put global transition_animation_scale 0' >/dev/null 2>&1 || true
-    sh_ 'settings put global animator_duration_scale 0' >/dev/null 2>&1 || true
+    sh_ 'settings put global animator_duration_scale 1' >/dev/null 2>&1 || true
     ensure_awake || true
     sh_ 'input keyevent KEYCODE_HOME' >/dev/null 2>&1 || true
 }
