@@ -2,9 +2,6 @@
 # Build statically linked scx_fcp profiles, optional baseline schedulers, and
 # the synthetic frame benchmark.
 #
-# The scheduler sources live in the scx workspace. This repository is the
-# source mirror under review; set SCX_SUB to its canonical checkout.
-#
 # Environment:
 #   SCX_ROOT        scx workspace                 (default: $HOME/workspace/scx)
 #   SCX_SUB         scheduler source directory    (default: $SCX_ROOT/scheds/rust/scx_fcp)
@@ -16,6 +13,7 @@
 #   JOBS            cargo parallelism             (default: nproc)
 #   ZSTD_A          path to libzstd.a             (auto-detected)
 #   STRICT_SOURCE   1 to fail when the mirror differs from SCX_SUB
+#   SYNC_SOURCE     1 to sync mirror into SCX_SUB (default: 1)
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -28,6 +26,7 @@ PROFILES=${PROFILES:-"default named zero-hint"}
 BUILD_BASELINES=${BUILD_BASELINES:-0}
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
 STRICT_SOURCE=${STRICT_SOURCE:-0}
+SYNC_SOURCE=${SYNC_SOURCE:-1}
 
 die() { echo "build_static: $*" >&2; exit 1; }
 warn() { echo "build_static: warning: $*" >&2; }
@@ -63,16 +62,28 @@ MIRROR_FILES=(
 )
 MISMATCH=0
 for rel in "${MIRROR_FILES[@]}"; do
-    if ! cmp -s "$REPO_ROOT/$rel" "$SCX_SUB/$rel"; then
-        warn "mirror differs from SCX_SUB: $rel"
-        MISMATCH=1
+    if [ -f "$REPO_ROOT/$rel" ] && [ -f "$SCX_SUB/$rel" ] && ! cmp -s "$REPO_ROOT/$rel" "$SCX_SUB/$rel"; then
+        if [ "$SYNC_SOURCE" = 1 ] && [ "$REPO_ROOT" != "$SCX_SUB" ]; then
+            mkdir -p "$(dirname "$SCX_SUB/$rel")"
+            cp -f "$REPO_ROOT/$rel" "$SCX_SUB/$rel"
+        else
+            warn "mirror differs from SCX_SUB: $rel"
+            MISMATCH=1
+        fi
     fi
 done
 if [ "$MISMATCH" = 1 ] && [ "$STRICT_SOURCE" = 1 ]; then
     die "source mirror does not match SCX_SUB; sync it or set STRICT_SOURCE=0"
 fi
 
-export PATH=${SCX_PATH:-$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}
+# Prefer Clang 22+ when available so BPF arena / may_goto code in scx_lavd and scx_p2dq passes verifier.
+CLANG_PREBUILT=${CLANG_DIR:-"$HOME/workspace/aosp_research/cf/kernel/common-android-mainline/prebuilts/clang/host/linux-x86/clang-r596125"}
+if [ -d "$CLANG_PREBUILT/bin" ]; then
+    export PATH=${SCX_PATH:-$HOME/.cargo/bin:$CLANG_PREBUILT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}
+    export LIBCLANG_PATH="$CLANG_PREBUILT/lib"
+else
+    export PATH=${SCX_PATH:-$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}
+fi
 export RUSTFLAGS="-C target-feature=+crt-static -C link-arg=$ZSTD_A"
 export CARGO_TERM_COLOR=never
 
@@ -100,8 +111,7 @@ build_profile() {
     local env_profile=$profile
     [ "$profile" = default ] && env_profile=""
     echo "build_static: profile $profile -> $BIN_DIR/$name"
-    cargo clean --manifest-path "$SCX_ROOT/Cargo.toml" \
-        --target "$TARGET" -p scx_fcp >/dev/null 2>&1 || true
+    touch "$SCX_SUB/src/bpf/main.bpf.c"
     run_logged "$LOG_DIR/build-fcp-$profile.log" \
         env SCX_FCP_BUILD="$env_profile" \
         cargo build --locked --manifest-path "$SCX_ROOT/Cargo.toml" \
@@ -128,14 +138,16 @@ for profile in $PROFILES; do
     esac
 done
 
-echo "build_static: building fcp_frame_bench"
-make -C "$SCX_SUB/tools/scx_fcp_bench" clean >/dev/null 2>&1 || true
+BENCH_DIR="$SCX_SUB/tools/scx_fcp_bench"
+[ -d "$BENCH_DIR" ] || BENCH_DIR="$SCX_ROOT/tools/scx_fcp_bench"
+echo "build_static: building fcp_frame_bench in $BENCH_DIR"
+make -C "$BENCH_DIR" clean >/dev/null 2>&1 || true
 run_logged "$LOG_DIR/build-bench.log" \
-    make -C "$SCX_SUB/tools/scx_fcp_bench" \
+    make -C "$BENCH_DIR" \
     CC="${CC:-cc}" \
     CFLAGS="-O2 -g -Wall -Wextra -Werror -std=c11 -static" \
     LDFLAGS="-pthread -lm"
-install_bin "$SCX_SUB/tools/scx_fcp_bench/fcp_frame_bench" fcp_frame_bench
+install_bin "$BENCH_DIR/fcp_frame_bench" fcp_frame_bench
 
 for bin in "$BIN_DIR"/*; do
     [ -f "$bin" ] || continue
