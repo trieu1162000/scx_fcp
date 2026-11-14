@@ -1,76 +1,66 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
-  <title id="title">Frame context carried from a root to synchronous helpers</title>
-  <desc id="desc">A frame root wakes a UI thread, a render thread, SurfaceFlinger, and a helper. A bounded token follows the synchronous wake edges.</desc>
+  <title id="title">Bounded Frame-Context Token Propagation (scx_fcp r1.2)</title>
+  <desc id="desc">DAG-source behavioral frame root admission mints an epoch-stamped token propagated across synchronous and fan-out-capped same-TGID edges up to depth 5.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#f8fbff"/>
-      <stop offset="1" stop-color="#eef5fc"/>
+      <stop offset="1" stop-color="#eef7f6"/>
     </linearGradient>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#08519c"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#159D8C"/>
     </marker>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#14213d" flood-opacity="0.12"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#14213d" flood-opacity="0.10"/>
     </filter>
   </defs>
-
   <rect width="1200" height="360" fill="url(#bg)"/>
-  <text x="60" y="52" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#14213d">Frame context is carried across sleeps</text>
-  <text x="60" y="78" font-family="Arial, sans-serif" font-size="13" fill="#5b6577">One bounded token follows the synchronous edges a frame root actually wakes.</text>
+  <text x="50" y="46" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" font-weight="700" fill="#14213d">scx_fcp (r1.2): Bounded Frame-Context Token Propagation</text>
+  <text x="50" y="70" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#4a5568">Single-method loadable sched_ext policy: DAG-source root admission (d = 0) &#8594; fan-out-capped inheritance (1 &#8804; d &#8804; 5) &#8594; slack-ordered critical dispatch.</text>
 
   <g filter="url(#shadow)">
-    <rect x="60" y="130" width="180" height="92" rx="14" fill="#ffffff" stroke="#d8e2ef"/>
-    <rect x="60" y="130" width="180" height="8" rx="4" fill="#08519c"/>
-    <text x="84" y="168" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#14213d">Frame root</text>
-    <text x="84" y="190" font-family="Arial, sans-serif" font-size="12" fill="#5b6577">behavioral admission</text>
-    <text x="84" y="207" font-family="Arial, sans-serif" font-size="12" fill="#08519c">token epoch = t</text>
-  </g>
-
-  <g filter="url(#shadow)">
-    <rect x="340" y="110" width="190" height="82" rx="14" fill="#ffffff" stroke="#d8e2ef"/>
-    <text x="364" y="144" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#14213d">UIThread</text>
-    <text x="364" y="165" font-family="Arial, sans-serif" font-size="11" fill="#5b6577">select_cpu + enqueue</text>
+    <rect x="50" y="120" width="210" height="104" rx="12" fill="#ffffff" stroke="#159D8C" stroke-width="2"/>
+    <rect x="50" y="120" width="210" height="8" rx="4" fill="#159D8C"/>
+    <text x="68" y="152" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#14213d">1. Frame Root (d = 0)</text>
+    <text x="68" y="173" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" fill="#4a5568">VSYNC period [3.5, 85 ms]</text>
+    <text x="68" y="191" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" fill="#4a5568">DAG Source Invariant</text>
+    <text x="68" y="209" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#159D8C">Token T = (e, t0, t_exp, d=0)</text>
   </g>
 
   <g filter="url(#shadow)">
-    <rect x="340" y="220" width="190" height="82" rx="14" fill="#ffffff" stroke="#d8e2ef"/>
-    <text x="364" y="254" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#14213d">RenderThread</text>
-    <text x="364" y="275" font-family="Arial, sans-serif" font-size="11" fill="#5b6577">synchronous wake</text>
+    <rect x="330" y="100" width="220" height="86" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="348" y="130" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#14213d">2a. RenderThread (d = 1)</text>
+    <text x="348" y="150" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" fill="#4a5568">Same-TGID handoff &#8804; 3.5 ms</text>
+    <text x="348" y="168" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" fill="#159D8C">Fan-out cap: n_woke &#8804; 1</text>
   </g>
 
   <g filter="url(#shadow)">
-    <rect x="640" y="110" width="190" height="82" rx="14" fill="#ffffff" stroke="#d8e2ef"/>
-    <text x="664" y="144" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#14213d">SurfaceFlinger</text>
-    <text x="664" y="165" font-family="Arial, sans-serif" font-size="11" fill="#5b6577">same-TGID handoff</text>
+    <rect x="330" y="210" width="230" height="86" rx="12" fill="#fff8f1" stroke="#E68632" stroke-width="1.5" stroke-dasharray="5,3"/>
+    <text x="346" y="240" font-family="DejaVu Sans, Arial, sans-serif" font-size="12.2" font-weight="700" fill="#9c4221">Shader Pool Thread&lt;00..15&gt;</text>
+    <text x="346" y="260" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" fill="#7b341e">1-to-16 fan-out (n_woke &gt; 1)</text>
+    <text x="346" y="278" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" font-weight="700" fill="#E68632">Capped &#8594; Tier 1 (Interactive)</text>
   </g>
 
   <g filter="url(#shadow)">
-    <rect x="640" y="220" width="190" height="82" rx="14" fill="#ffffff" stroke="#d8e2ef"/>
-    <text x="664" y="254" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#14213d">Helper</text>
-    <text x="664" y="275" font-family="Arial, sans-serif" font-size="11" fill="#5b6577">inherits only on edge</text>
+    <rect x="620" y="100" width="235" height="86" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="636" y="130" font-family="DejaVu Sans, Arial, sans-serif" font-size="12.8" font-weight="700" fill="#14213d">2b. surfaceflinger / HWC (d &#8804; 5)</text>
+    <text x="636" y="150" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" fill="#4a5568">SCX_WAKE_SYNC Binder IPC</text>
+    <text x="636" y="168" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" fill="#159D8C">Cross-epoch renewal (e_w &#8800; e_&#964;)</text>
   </g>
 
   <g filter="url(#shadow)">
-    <rect x="930" y="165" width="210" height="82" rx="14" fill="#0b2d52" stroke="#0b2d52"/>
-    <text x="954" y="199" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#ffffff">Critical DSQ</text>
-    <text x="954" y="220" font-family="Arial, sans-serif" font-size="11" fill="#cfe3f7">idle big core / preempt</text>
+    <rect x="910" y="112" width="245" height="116" rx="12" fill="#0d3b36" stroke="#159D8C" stroke-width="2"/>
+    <text x="926" y="144" font-family="DejaVu Sans, Arial, sans-serif" font-size="12.8" font-weight="700" fill="#ffffff">3. Slack-Ordered Critical DSQ</text>
+    <text x="926" y="166" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" fill="#b2f5ea">D_&#964;(t) = t + &#947; &#183; B_rem(t) / (1 + d_&#964;)</text>
+    <text x="926" y="186" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" fill="#e6fffa">&#8226; Big/Prime core + KICK_PREEMPT</text>
+    <text x="926" y="205" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.2" fill="#e6fffa">&#8226; No SCX_DSQ_LOCAL inversion</text>
   </g>
 
-  <g stroke="#08519c" stroke-width="2.2" fill="none" marker-end="url(#arrow)">
-    <path d="M240 176 C280 176 300 151 340 151"/>
-    <path d="M240 176 C280 176 300 261 340 261"/>
-    <path d="M530 151 C575 151 600 151 640 151"/>
-    <path d="M530 261 C575 261 600 261 640 261"/>
-    <path d="M830 151 C875 151 890 196 930 196"/>
-    <path d="M830 261 C875 261 890 216 930 216"/>
+  <g stroke="#159D8C" stroke-width="2.4" fill="none" marker-end="url(#arrow)">
+    <path d="M260 165 C290 165 300 143 330 143"/>
+    <path d="M550 143 C580 143 590 143 620 143"/>
+    <path d="M855 143 C880 143 888 165 910 165"/>
   </g>
+  <path d="M440 186 L440 210" stroke="#E68632" stroke-width="2" stroke-dasharray="4,3" fill="none"/>
 
-  <g font-family="Arial, sans-serif" font-size="11" fill="#08519c">
-    <text x="265" y="128">wake</text>
-    <text x="265" y="297">wake</text>
-    <text x="560" y="128">wake</text>
-    <text x="560" y="297">wake</text>
-  </g>
-
-  <text x="60" y="335" font-family="Arial, sans-serif" font-size="11" fill="#5b6577">Depth bound: 3 · expiry: one frame budget · same-TGID window: 1000 µs</text>
+  <text x="50" y="334" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" fill="#4a5568">Max hop depth: d &#8804; 5 &#183; Sub-frame block filter: &lt; 3.5 ms &#183; Same-TGID handoff window: &#8804; 3.5 ms &#183; Service revocation cap: 4.0 ms</text>
 </svg>
