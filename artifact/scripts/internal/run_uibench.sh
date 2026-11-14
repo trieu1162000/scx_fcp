@@ -199,7 +199,8 @@ wireless_off_animations() {
   sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
   sh_ 'settings put global window_animation_scale 0' >/dev/null 2>&1 || true
   sh_ 'settings put global transition_animation_scale 0' >/dev/null 2>&1 || true
-  sh_ 'settings put global animator_duration_scale 0' >/dev/null 2>&1 || true
+  sh_ 'setprop debug.hwui.renderer opengl' >/dev/null 2>&1 || true
+  sh_ 'settings put global animator_duration_scale 1' >/dev/null 2>&1 || true
   sh_ 'settings put system screen_off_timeout 2147483647' >/dev/null 2>&1 || true
   sh_ 'settings put global stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
   sh_ 'settings put secure accessibility_disable_animations 0' >/dev/null 2>&1 || true

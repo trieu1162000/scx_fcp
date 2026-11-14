@@ -7,13 +7,17 @@ jank counts summed over valid runs.  Percentiles are never pooled or averaged
 across tests.
 
 Usage:
-  summarize_uibench.py results/uibench_stable/16vcpu [more roots ...]
+  summarize_uibench.py [results-root ...]
+
+The default root is $RESULTS_ROOT. Each root is searched recursively for
+run-level metrics.json files produced by extract_uibench.py.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -30,7 +34,8 @@ METRICS = [
     ("wall_time_s", "wall s"),
 ]
 
-POLICY_ORDER = ["eevdf", "scx_fcp_behavioral", "scx_p2dq_pelt_off", "scx_lavd"]
+POLICY_ORDER = ["eevdf", "scx_fcp_behavioral", "scx_fcp", "scx_fcp_named",
+                "scx_p2dq_pelt_off", "scx_p2dq", "scx_lavd"]
 TEST_ORDER = ["inflating-list", "bitmap-upload", "shadow-grid-list", "slow-bind-recycler",
               "trivial-recycler", "layout-cache-low"]
 
@@ -73,10 +78,7 @@ def load_rows(roots: list[Path]) -> list[dict]:
         if root.is_file() and root.name == "metrics.json":
             files = [root]
         else:
-            files = sorted(
-                p for p in root.rglob("metrics.json")
-                if not any(part.startswith("_") for part in p.parts)
-            )
+            files = sorted(root.rglob("metrics.json"))
         for path in files:
             rp = path.resolve()
             if rp in seen:
@@ -103,9 +105,13 @@ def load_rows(roots: list[Path]) -> list[dict]:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    roots = [Path(arg) for arg in sys.argv[1:]]
+        env_root = os.environ.get("RESULTS_ROOT")
+        if not env_root:
+            print(__doc__)
+            return 2
+        roots = [Path(env_root)]
+    else:
+        roots = [Path(arg) for arg in sys.argv[1:]]
     rows = load_rows(roots)
     if not rows:
         print("no metrics.json found")
@@ -177,7 +183,7 @@ def main() -> int:
     print()
     print("| Test | metric | EEVDF | fcp | fcp - EEVDF | lower is better |")
     print("|---|---|---:|---:|---:|---|")
-    if ("eevdf", tests[0]) in groups:
+    if any(policy == "eevdf" for policy, _ in groups):
         for test in tests:
             e = [r for r in groups.get(("eevdf", test), []) if r.get("valid")]
             f = [r for r in groups.get(("scx_fcp_behavioral", test), []) if r.get("valid")]

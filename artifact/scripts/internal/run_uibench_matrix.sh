@@ -239,7 +239,8 @@ reboot_device() {
   sh_ 'settings put system screen_off_timeout 2147483647' >/dev/null 2>&1 || true
   sh_ 'settings put global window_animation_scale 0' >/dev/null 2>&1 || true
   sh_ 'settings put global transition_animation_scale 0' >/dev/null 2>&1 || true
-  sh_ 'settings put global animator_duration_scale 0' >/dev/null 2>&1 || true
+  sh_ 'setprop debug.hwui.renderer opengl' >/dev/null 2>&1 || true
+  sh_ 'settings put global animator_duration_scale 1' >/dev/null 2>&1 || true
   sh_ 'input keyevent KEYCODE_WAKEUP' >/dev/null 2>&1 || true
   sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
   sh_ 'input keyevent KEYCODE_HOME' >/dev/null 2>&1 || true
