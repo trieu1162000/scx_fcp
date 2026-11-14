@@ -16,6 +16,9 @@ fn main() {
     if std::env::var_os("SCX_FCP_NO_TOKEN").is_some() {
         bpf_cflags.push_str(" -DSCX_FCP_NO_TOKEN");
     }
+    if std::env::var_os("SCX_FCP_NO_FANOUT_CAP").is_some() {
+        bpf_cflags.push_str(" -DSCX_FCP_NO_FANOUT_CAP");
+    }
     let profile_name = if profile.is_empty() {
         "default".to_owned()
     } else {

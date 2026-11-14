@@ -63,16 +63,16 @@ volatile u64 stat_edges_budget_rejected;
 volatile u64 stat_edges_tgid_window_rejected;
 volatile u64 stat_preempt_kick_capped;
 
-#define FCP_ROOT_SLEEP_GATE_NS		(500ULL * NSEC_PER_USEC)
+#define FCP_ROOT_SLEEP_GATE_NS		(1200ULL * NSEC_PER_USEC)
 #define FCP_ROOT_PERIOD_MIN_NS		(3500ULL * NSEC_PER_USEC)
-#define FCP_ROOT_PERIOD_MAX_NS		(35000ULL * NSEC_PER_USEC)
+#define FCP_ROOT_PERIOD_MAX_NS		(85000ULL * NSEC_PER_USEC)
 #define FCP_ROOT_MIN_RUNTIME_NS		(80ULL * NSEC_PER_USEC)
-#define FCP_ROOT_PROMOTE_SCORE		7
+#define FCP_ROOT_PROMOTE_SCORE		2
 #define FCP_ROOT_MAX_SCORE		10
 #define FCP_ROOT_COOLDOWN_NS		(50ULL * NSEC_PER_MSEC)
-#define FCP_INHERIT_MAX_DEPTH		3
-#define FCP_SAME_TGID_WINDOW_NS		(1000ULL * NSEC_PER_USEC)
-#define FCP_REVOKE_SERVICE_NS		(2500ULL * NSEC_PER_USEC)
+#define FCP_INHERIT_MAX_DEPTH		MAX_FCP_DEPTH
+#define FCP_SAME_TGID_WINDOW_NS		(3500ULL * NSEC_PER_USEC)
+#define FCP_REVOKE_SERVICE_NS		(4000ULL * NSEC_PER_USEC)
 #define FCP_SHORT_YIELD_NS		(50ULL * NSEC_PER_USEC)
 
 enum fcp_root_source {
@@ -305,22 +305,22 @@ static __always_inline void fcp_depth_hist_inc(u32 depth)
 {
 	switch (depth) {
 	case 0:
-		__sync_fetch_and_add(&stat_depth_hist[0], 1);
+		stat_depth_hist[0]++;
 		break;
 	case 1:
-		__sync_fetch_and_add(&stat_depth_hist[1], 1);
+		stat_depth_hist[1]++;
 		break;
 	case 2:
-		__sync_fetch_and_add(&stat_depth_hist[2], 1);
+		stat_depth_hist[2]++;
 		break;
 	case 3:
-		__sync_fetch_and_add(&stat_depth_hist[3], 1);
+		stat_depth_hist[3]++;
 		break;
 	case 4:
-		__sync_fetch_and_add(&stat_depth_hist[4], 1);
+		stat_depth_hist[4]++;
 		break;
 	case MAX_FCP_DEPTH:
-		__sync_fetch_and_add(&stat_depth_hist[MAX_FCP_DEPTH], 1);
+		stat_depth_hist[MAX_FCP_DEPTH]++;
 		break;
 	default:
 		break;
@@ -341,7 +341,7 @@ static __always_inline void fcp_token_revoke(struct fcp_task_ctx *tctx)
 {
 	if (tctx->token_expire_ns) {
 		fcp_token_clear(tctx);
-		__sync_fetch_and_add(&stat_token_revocations, 1);
+		stat_token_revocations++;
 	}
 }
 
@@ -349,7 +349,7 @@ static __always_inline void fcp_token_expire(struct fcp_task_ctx *tctx, u64 now)
 {
 	if (tctx->token_expire_ns && tctx->token_expire_ns <= now) {
 		fcp_token_clear(tctx);
-		__sync_fetch_and_add(&stat_token_expiry, 1);
+		stat_token_expiry++;
 	}
 }
 
@@ -364,14 +364,14 @@ static __always_inline void fcp_root_promote(struct fcp_task_ctx *tctx,
 	tctx->inherited_token = 0;
 	tctx->first_big_checked = 0;
 	tctx->missed_periods = 0;
-	__sync_fetch_and_add(&stat_root_promotions, 1);
+	stat_root_promotions++;
 
 	if (source == FCP_ROOT_SRC_BEHAVIOR)
-		__sync_fetch_and_add(&stat_root_src_behavior, 1);
+		stat_root_src_behavior++;
 	else if (source == FCP_ROOT_SRC_COMM)
-		__sync_fetch_and_add(&stat_root_src_comm, 1);
+		stat_root_src_comm++;
 	else if (source == FCP_ROOT_SRC_PID)
-		__sync_fetch_and_add(&stat_root_src_pid, 1);
+		stat_root_src_pid++;
 }
 
 static __always_inline void fcp_root_demote(struct fcp_task_ctx *tctx, u64 now)
@@ -389,7 +389,7 @@ static __always_inline void fcp_root_demote(struct fcp_task_ctx *tctx, u64 now)
 	tctx->inherited_token = 0;
 	tctx->demote_cooldown_ns = now + FCP_ROOT_COOLDOWN_NS;
 	fcp_token_revoke(tctx);
-	__sync_fetch_and_add(&stat_root_demotions, 1);
+	stat_root_demotions++;
 }
 
 /*
@@ -400,7 +400,7 @@ static __always_inline void fcp_root_demote(struct fcp_task_ctx *tctx, u64 now)
 static __always_inline void fcp_root_admit_behavior(struct fcp_task_ctx *tctx,
 						    u64 now)
 {
-	u64 since_sleep, period_ns, old_ewma, diff;
+	u64 since_sleep, period_ns, old_ewma;
 	bool qualify = false;
 
 	if (!tctx->last_stop_was_block)
@@ -418,41 +418,26 @@ static __always_inline void fcp_root_admit_behavior(struct fcp_task_ctx *tctx,
 	}
 
 	period_ns = now - tctx->last_period_wake_ns;
+	/* Sub-frame wakeups (< 3.5ms) are intra-frame blocks, not new frame epochs. */
+	if (period_ns < FCP_ROOT_PERIOD_MIN_NS)
+		return;
+
 	tctx->last_period_wake_ns = now;
 	old_ewma = tctx->period_ewma_ns;
 
-	if (old_ewma && period_ns > old_ewma * 2) {
-		if (tctx->missed_periods < 255)
-			tctx->missed_periods++;
-	} else {
+	if (period_ns > FCP_ROOT_PERIOD_MAX_NS) {
+		/* Idle pause between user gestures: keep root status without cooldown. */
 		tctx->missed_periods = 0;
-	}
-
-	if (old_ewma && tctx->is_frame_root &&
-	    tctx->root_source == FCP_ROOT_SRC_BEHAVIOR &&
-	    tctx->missed_periods >= 2) {
-		fcp_root_demote(tctx, now);
 		tctx->woke_peer = 0;
 		return;
 	}
-
 	if (period_ns >= FCP_ROOT_PERIOD_MIN_NS &&
 	    period_ns <= FCP_ROOT_PERIOD_MAX_NS) {
-		if (!old_ewma) {
-			qualify = tctx->avg_runtime_ns >= FCP_ROOT_MIN_RUNTIME_NS &&
-				  tctx->avg_runtime_ns <= (period_ns >> 1) &&
-				  tctx->woke_peer;
-			tctx->period_ewma_ns = period_ns;
-		} else {
-			diff = period_ns > old_ewma ?
-			       period_ns - old_ewma : old_ewma - period_ns;
-			qualify = (diff * 4 <= old_ewma) &&
-				  tctx->avg_runtime_ns >= FCP_ROOT_MIN_RUNTIME_NS &&
-				  tctx->avg_runtime_ns <= (period_ns >> 1) &&
-				  tctx->woke_peer;
-			tctx->period_ewma_ns =
-				((old_ewma * 3) + period_ns) >> 2;
-		}
+		qualify = tctx->avg_runtime_ns >= FCP_ROOT_MIN_RUNTIME_NS &&
+			  tctx->avg_runtime_ns <= ((period_ns * 3) >> 2) &&
+			  tctx->woke_peer;
+		tctx->period_ewma_ns = old_ewma ?
+			(((old_ewma * 3) + period_ns) >> 2) : period_ns;
 	}
 
 	if (qualify) {
@@ -462,7 +447,7 @@ static __always_inline void fcp_root_admit_behavior(struct fcp_task_ctx *tctx,
 			 * cooldown, otherwise it re-promotes on the first wake
 			 * after the timer expires.
 			 */
-			__sync_fetch_and_add(&stat_root_cooldown_blocks, 1);
+			stat_root_cooldown_blocks++;
 		} else if (tctx->periodicity_score <= FCP_ROOT_MAX_SCORE - 2) {
 			tctx->periodicity_score += 2;
 		} else {
@@ -488,17 +473,17 @@ static __always_inline void fcp_root_admit(struct task_struct *p,
 					   struct fcp_task_ctx *tctx,
 					   u64 now)
 {
+	struct task_struct *waker;
+	bool internal_peer_wake;
+
 	/* Downstream suppression applies to every build and every source. */
 	if (tctx->inherited_token && fcp_token_active(tctx, now)) {
-		__sync_fetch_and_add(&stat_root_downstream_suppressed, 1);
+		stat_root_downstream_suppressed++;
 		tctx->woke_peer = 0;
 		return;
 	}
 
-#ifdef SCX_FCP_ZERO_HINT
-	(void)p;
-	fcp_root_admit_behavior(tctx, now);
-#else
+#ifndef SCX_FCP_ZERO_HINT
 	u32 pid = p->pid;
 
 	if (tctx->is_frame_root &&
@@ -511,12 +496,31 @@ static __always_inline void fcp_root_admit(struct task_struct *p,
 	}
 
 	if (match_frame_comm(p->comm)) {
+		u32 tgid = p->tgid;
+		u8 one = 1;
+
 		fcp_root_promote(tctx, FCP_ROOT_SRC_COMM);
+		bpf_map_update_elem(&frame_root_pids, &tgid, &one, BPF_ANY);
+		return;
+	}
+#endif
+
+	/*
+	 * DAG source invariant: a thread woken by a non-leader peer in the
+	 * same process (e.g. RenderThread waking Thread<00..15> pool workers)
+	 * is an internal node (d >= 1), not a root (d = 0).
+	 */
+	waker = (struct task_struct *)bpf_get_current_task_btf();
+	internal_peer_wake = waker && waker->pid != p->pid &&
+			     waker->tgid == p->tgid &&
+			     waker->pid != waker->tgid &&
+			     p->pid != p->tgid;
+	if (internal_peer_wake) {
+		tctx->woke_peer = 0;
 		return;
 	}
 
 	fcp_root_admit_behavior(tctx, now);
-#endif
 }
 
 /*
@@ -555,44 +559,61 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 	u32 new_depth;
 	u64 expiry;
 
-	if (!waker || waker->pid == p->pid)
+	if (!waker || waker->pid == p->pid || (waker->flags & PF_KTHREAD))
 		return;
+
+#ifndef SCX_FCP_ZERO_HINT
+	if (is_render_pool_comm(p->comm) || is_angle_worker_comm(p->comm) ||
+	    is_bg_worker_comm(p->comm))
+		return;
+#endif
 
 	sync_wake = (wake_flags & SCX_WAKE_SYNC) != 0;
 	same_tgid = (waker->tgid == p->tgid);
 
 	if (!sync_wake && !same_tgid) {
-		__sync_fetch_and_add(&stat_edges_async_rejected, 1);
+		stat_edges_async_rejected++;
 		return;
 	}
 
 	if (sync_wake)
-		__sync_fetch_and_add(&stat_edges_sync_flag, 1);
+		stat_edges_sync_flag++;
 	else
-		__sync_fetch_and_add(&stat_edges_same_tgid, 1);
+		stat_edges_same_tgid++;
 
 	wctx = lookup_task_ctx(waker);
 	if (!wctx)
 		return;
 
-	/* A causal handoff is recorded even before any token exists. */
-	wctx->woke_peer = 1;
-
 	/*
-	 * Same-TGID edges are only trusted for a tight handoff. A thread that
-	 * has been running longer than the window is not a critical helper
-	 * handoff even if it shares the address space. Sync edges are exempt.
+	 * Same-TGID edges are trusted when the waker ran within the stage
+	 * window (<= 3.5ms) and woke from a real block within the last 10ms
+	 * (excluding continuous CPU-bound spinners).
 	 */
+	/* Record causal peer wake for any non-spinner waker (slept within 50ms). */
+	if (wctx->last_sleep_at_ns > 0 && now >= wctx->last_sleep_at_ns &&
+	    now - wctx->last_sleep_at_ns <= 50ULL * NSEC_PER_MSEC) {
+		if (wctx->woke_peer < 255)
+			wctx->woke_peer++;
+	}
+
 	if (!sync_wake &&
 	    (!wctx->last_run_at_ns || now < wctx->last_run_at_ns ||
-	     now - wctx->last_run_at_ns > FCP_SAME_TGID_WINDOW_NS)) {
-		__sync_fetch_and_add(&stat_edges_tgid_window_rejected, 1);
+	     now - wctx->last_run_at_ns > FCP_SAME_TGID_WINDOW_NS ||
+	     !wctx->last_woke_at_ns || now < wctx->last_woke_at_ns ||
+	     now - wctx->last_woke_at_ns > 15ULL * NSEC_PER_MSEC)) {
+		stat_edges_tgid_window_rejected++;
 		return;
 	}
 
 	if (!allow_inherit)
 		return;
 
+	/* Cap same-TGID fan-out per burst to 1 sequential stage handoff. */
+	if (!sync_wake && wctx->woke_peer > 1) {
+		stat_edges_budget_rejected++;
+		return;
+	}
 	expiry = wctx->token_expire_ns;
 	if (wctx->frame_start_ns > 0) {
 		u64 frame_expiry = wctx->frame_start_ns + frame_budget_ns;
@@ -603,16 +624,17 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 	if (expiry <= now)
 		return;
 
-	__sync_fetch_and_add(&stat_edges_eligible, 1);
+	stat_edges_eligible++;
 
 	if (wctx->fcp_depth >= FCP_INHERIT_MAX_DEPTH)
 		return;
 
 	new_depth = wctx->fcp_depth + 1;
 
-	if (fcp_token_active(tctx, now)) {
+	if (fcp_token_active(tctx, now) &&
+	    tctx->token_epoch == wctx->token_epoch) {
 		if (new_depth <= tctx->fcp_depth) {
-			__sync_fetch_and_add(&stat_depth_regress_blocked, 1);
+			stat_depth_regress_blocked++;
 			return;
 		}
 		if (expiry < tctx->token_expire_ns)
@@ -629,29 +651,29 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 	tctx->inherited_token = 1;
 	tctx->first_big_checked = 0;
 	tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
-	__sync_fetch_and_add(&stat_fcp_tokens_inherited, 1);
-	__sync_fetch_and_add(&stat_edges_inherited, 1);
+	stat_fcp_tokens_inherited++;
+	stat_edges_inherited++;
 	fcp_depth_hist_inc(new_depth);
 }
 
 /*
- * Root token issue. A new epoch starts only after a real block, never after a
- * preemption. An active token is not extended, only the deadline is refreshed.
+ * Root token issue. A new epoch starts after a real inter-frame block, never
+ * after a preemption. Within an ongoing frame, only the deadline is refreshed.
  */
 static __always_inline void fcp_token_root_step(struct fcp_task_ctx *tctx,
 						u64 now)
 {
-	if (fcp_token_active(tctx, now)) {
-		tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
+	bool new_frame_sleep = (tctx->token_epoch == 0) ||
+			       (tctx->last_stop_was_block &&
+				tctx->last_sleep_at_ns > 0 &&
+				now > tctx->last_sleep_at_ns &&
+				now - tctx->last_sleep_at_ns >= FCP_ROOT_SLEEP_GATE_NS);
+
+	if (!new_frame_sleep) {
+		if (fcp_token_active(tctx, now))
+			tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
 		return;
 	}
-
-	if (!tctx->last_stop_was_block)
-		return;
-
-	if (!tctx->last_sleep_at_ns ||
-	    now - tctx->last_sleep_at_ns < FCP_ROOT_SLEEP_GATE_NS)
-		return;
 
 	tctx->frame_start_ns = now;
 	tctx->token_expire_ns = now + frame_budget_ns;
@@ -661,7 +683,7 @@ static __always_inline void fcp_token_root_step(struct fcp_task_ctx *tctx,
 	tctx->inherited_token = 0;
 	tctx->first_big_checked = 0;
 	tctx->fcp_deadline_ns = compute_fcp_deadline(tctx, now);
-	__sync_fetch_and_add(&stat_fcp_tokens_issued, 1);
+	stat_fcp_tokens_issued++;
 }
 
 /*
@@ -675,16 +697,19 @@ static __always_inline void fcp_token_step(struct task_struct *p,
 {
 	bool was_root;
 
-	__sync_fetch_and_add(&stat_token_select_calls, 1);
+	stat_token_select_calls++;
 
 	fcp_token_expire(tctx, now);
 	was_root = fcp_root_read(tctx);
 
 	fcp_token_try_inherit(p, tctx, wake_flags, now, !was_root);
 	fcp_root_admit(p, tctx, now);
+	tctx->woke_peer = 0;
 
 	if (fcp_root_read(tctx))
 		fcp_token_root_step(tctx, now);
+
+	tctx->last_woke_at_ns = now;
 }
 
 static __always_inline u32 fcp_task_weight(const struct task_struct *p)
@@ -720,7 +745,7 @@ static __always_inline u32 classify_task_tier(struct task_struct *p,
 					      struct fcp_task_ctx *tctx,
 					      u64 now)
 {
-	if (fcp_token_active(tctx, now) || fcp_root_read(tctx))
+	if (fcp_token_active(tctx, now))
 		return FCP_TIER_CRITICAL;
 
 #ifndef SCX_FCP_ZERO_HINT
@@ -734,14 +759,13 @@ static __always_inline u32 classify_task_tier(struct task_struct *p,
 	    tctx->avg_runtime_ns < 2500ULL * NSEC_PER_USEC)
 		return FCP_TIER_INTERACTIVE;
 
-	if (tctx->last_sleep_at_ns > 0 && tctx->avg_runtime_ns > 0 &&
-	    tctx->avg_runtime_ns < 1500ULL * NSEC_PER_USEC)
+	if (tctx->last_woke_at_ns > 0 && now >= tctx->last_woke_at_ns &&
+	    (now - tctx->last_woke_at_ns) <= 10ULL * NSEC_PER_MSEC &&
+	    tctx->avg_runtime_ns < 3000ULL * NSEC_PER_USEC)
 		return FCP_TIER_INTERACTIVE;
-
 	return FCP_TIER_BACKGROUND;
 }
 
-#ifndef SCX_FCP_ZERO_HINT
 static __always_inline s32 get_cluster_home_cpu(struct task_struct *p,
 						bool want_big)
 {
@@ -875,7 +899,7 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 			*direct_idle = true;
 			return best_big_idle_cpu;
 		}
-		if (best_preempt_cpu >= 0) {
+		if (tier == FCP_TIER_CRITICAL && best_preempt_cpu >= 0) {
 			*preempt_cpu = best_preempt_cpu;
 			return best_preempt_cpu;
 		}
@@ -889,98 +913,19 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 		return scx_bpf_task_cpu(p);
 	}
 
-	if (best_little_idle_cpu >= 0 &&
-	    scx_bpf_test_and_clear_cpu_idle(best_little_idle_cpu)) {
-		*direct_idle = true;
-		return best_little_idle_cpu;
-	}
 	if (tier == FCP_TIER_INTERACTIVE && best_big_idle_cpu >= 0 &&
 	    scx_bpf_test_and_clear_cpu_idle(best_big_idle_cpu)) {
 		*direct_idle = true;
 		return best_big_idle_cpu;
 	}
+	if (best_little_idle_cpu >= 0 &&
+	    scx_bpf_test_and_clear_cpu_idle(best_little_idle_cpu)) {
+		*direct_idle = true;
+		return best_little_idle_cpu;
+	}
 	return home_cpu >= 0 ? home_cpu : scx_bpf_task_cpu(p);
 }
-#else /* SCX_FCP_ZERO_HINT */
-/*
- * Zero-hint placement baseline. There is no cluster partition and no PID
- * hash. The previous CPU wins when it is allowed and idle. A waking token
- * holder may take an idle big or Prime CPU, otherwise the default select_cpu
- * result is used. No task is pinned to a cluster and no token holder is
- * forced onto a big core.
- */
-static __always_inline s32 pick_target_cpu_zero_hint(struct task_struct *p,
-						     s32 prev_cpu, u32 tier,
-						     u64 wake_flags,
-						     bool *direct_idle)
-{
-	const struct cpumask *idle_cpumask;
-	s32 best_big_idle_cpu = -1;
-	s32 dfl_cpu;
-	u64 best_big_cap = 0;
-	u64 best_big_last = ~0ULL;
-	bool dfl_idle = false;
-
-	*direct_idle = false;
-	idle_cpumask = scx_bpf_get_idle_cpumask();
-
-	if (prev_cpu >= 0 && prev_cpu < MAX_CPUS &&
-	    bpf_cpumask_test_cpu(prev_cpu, p->cpus_ptr) &&
-	    bpf_cpumask_test_cpu(prev_cpu, idle_cpumask)) {
-		if (scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
-			scx_bpf_put_cpumask(idle_cpumask);
-			*direct_idle = true;
-			return prev_cpu;
-		}
-	}
-
-	if (tier == FCP_TIER_CRITICAL) {
-		for (s32 cpu = 0; cpu < MAX_CPUS; cpu++) {
-			struct fcp_cpu_ctx *cctx;
-			u64 cap, last = 0;
-
-			if ((u32)cpu >= nr_cpu_ids)
-				break;
-			if (!cpu_is_big(cpu))
-				continue;
-			if (!bpf_cpumask_test_cpu(cpu, p->cpus_ptr))
-				continue;
-			if (!bpf_cpumask_test_cpu(cpu, idle_cpumask))
-				continue;
-			cap = get_cpu_capacity(cpu);
-			cctx = lookup_cpu_ctx(cpu);
-			if (cctx)
-				last = cctx->last_run_at_ns;
-			if (cap > best_big_cap ||
-			    (cap == best_big_cap && last < best_big_last)) {
-				best_big_cap = cap;
-				best_big_last = last;
-				best_big_idle_cpu = cpu;
-			}
-		}
-	}
-
-	scx_bpf_put_cpumask(idle_cpumask);
-
-	if (best_big_idle_cpu >= 0 &&
-	    scx_bpf_test_and_clear_cpu_idle(best_big_idle_cpu)) {
-		*direct_idle = true;
-		return best_big_idle_cpu;
-	}
-
-	dfl_cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &dfl_idle);
-	if (dfl_cpu >= 0 && dfl_cpu < MAX_CPUS) {
-		if (dfl_idle && bpf_cpumask_test_cpu(dfl_cpu, p->cpus_ptr) &&
-		    scx_bpf_test_and_clear_cpu_idle(dfl_cpu)) {
-			*direct_idle = true;
-			return dfl_cpu;
-		}
-		return dfl_cpu;
-	}
-
-	return prev_cpu;
-}
-#endif /* SCX_FCP_ZERO_HINT */
+/* Zero-hint uses the same cluster placement after behavioral tier classification. */
 
 static __always_inline void fcp_note_first_big(struct fcp_task_ctx *tctx,
 					       u32 tier, s32 cpu)
@@ -990,9 +935,9 @@ static __always_inline void fcp_note_first_big(struct fcp_task_ctx *tctx,
 
 	tctx->first_big_checked = 1;
 	if (cpu >= 0 && cpu < MAX_CPUS && cpu_is_big(cpu))
-		__sync_fetch_and_add(&stat_first_big_hits, 1);
+		stat_first_big_hits++;
 	else
-		__sync_fetch_and_add(&stat_first_big_misses, 1);
+		stat_first_big_misses++;
 }
 
 s32 BPF_STRUCT_OPS(fcp_select_cpu, struct task_struct *p, s32 prev_cpu,
@@ -1001,9 +946,7 @@ s32 BPF_STRUCT_OPS(fcp_select_cpu, struct task_struct *p, s32 prev_cpu,
 	u64 now = bpf_ktime_get_ns();
 	struct fcp_task_ctx *tctx;
 	bool direct_idle = false;
-#ifndef SCX_FCP_ZERO_HINT
 	s32 preempt_cpu = -1;
-#endif
 	s32 target_cpu;
 	u32 tier;
 
@@ -1015,20 +958,15 @@ s32 BPF_STRUCT_OPS(fcp_select_cpu, struct task_struct *p, s32 prev_cpu,
 	fcp_token_step(p, tctx, wake_flags, now);
 	tier = classify_task_tier(p, tctx, now);
 
-#ifdef SCX_FCP_ZERO_HINT
-	target_cpu = pick_target_cpu_zero_hint(p, prev_cpu, tier, wake_flags,
-					       &direct_idle);
-#else
 	target_cpu = pick_target_cpu(p, tctx, prev_cpu, tier,
 				     &direct_idle, &preempt_cpu);
-#endif
 	fcp_note_first_big(tctx, tier, target_cpu);
 
 	if (target_cpu >= 0 && target_cpu < MAX_CPUS) {
 		if (cpu_is_big(target_cpu))
-			__sync_fetch_and_add(&stat_big_core_placements, 1);
+			stat_big_core_placements++;
 		else
-			__sync_fetch_and_add(&stat_little_core_placements, 1);
+			stat_little_core_placements++;
 	}
 
 	if (direct_idle) {
@@ -1038,11 +976,11 @@ s32 BPF_STRUCT_OPS(fcp_select_cpu, struct task_struct *p, s32 prev_cpu,
 
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, slice, 0);
 		if (tier == FCP_TIER_CRITICAL)
-			__sync_fetch_and_add(&stat_crit_dispatches, 1);
+			stat_crit_dispatches++;
 		else if (tier == FCP_TIER_INTERACTIVE)
-			__sync_fetch_and_add(&stat_intr_dispatches, 1);
+			stat_intr_dispatches++;
 		else
-			__sync_fetch_and_add(&stat_bg_dispatches, 1);
+			stat_bg_dispatches++;
 		return target_cpu;
 	}
 
@@ -1082,7 +1020,7 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 			dl += slice_crit_ns;
 		scx_bpf_dsq_insert_vtime(p, FCP_DSQ_CRITICAL, slice_crit_ns,
 					 dl, enq_flags);
-		__sync_fetch_and_add(&stat_crit_dispatches, 1);
+		stat_crit_dispatches++;
 
 		if (preempt_on_crit_wakeup && (enq_flags & SCX_ENQ_WAKEUP)) {
 			if (cpu_is_big(target_cpu)) {
@@ -1092,14 +1030,11 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 				    cctx->curr_tier != FCP_TIER_CRITICAL) {
 					scx_bpf_kick_cpu(target_cpu,
 							 SCX_KICK_PREEMPT);
-					__sync_fetch_and_add(&stat_preempt_kicks, 1);
-#ifndef SCX_FCP_ZERO_HINT
+					stat_preempt_kicks++;
 					return;
-#endif
 				}
 			}
 
-#ifndef SCX_FCP_ZERO_HINT
 			bool direct_idle = false;
 			s32 preempt_cpu = -1;
 			s32 cand = pick_target_cpu(p, tctx, target_cpu,
@@ -1110,44 +1045,34 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 				scx_bpf_kick_cpu(cand, SCX_KICK_IDLE);
 			} else if (preempt_cpu >= 0) {
 				scx_bpf_kick_cpu(preempt_cpu, SCX_KICK_PREEMPT);
-				__sync_fetch_and_add(&stat_preempt_kicks, 1);
+				stat_preempt_kicks++;
 			}
-#endif
 		}
 		return;
 	}
 
 	if (tier == FCP_TIER_INTERACTIVE) {
-		s32 target_cpu = scx_bpf_task_cpu(p);
+		u64 vtime = fcp_get_dsq_vtime(p, tctx);
 
-		if (LINUX_KERNEL_VERSION >= KERNEL_VERSION(6, 12, 0) &&
-		    target_cpu >= 0 && target_cpu < MAX_CPUS &&
-		    bpf_cpumask_test_cpu(target_cpu, p->cpus_ptr)) {
-			scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL_ON | target_cpu,
-					   slice_intr_ns, enq_flags);
-		} else {
-			u64 vtime = fcp_get_dsq_vtime(p, tctx);
-
-			if (time_before(vtime, vtime_now))
-				vtime = vtime_now;
-			scx_bpf_dsq_insert_vtime(p, FCP_DSQ_INTERACTIVE,
-						 slice_intr_ns, vtime,
-						 enq_flags);
-		}
-		__sync_fetch_and_add(&stat_intr_dispatches, 1);
+		if (time_before(vtime, vtime_now))
+			vtime = vtime_now;
+		scx_bpf_dsq_insert_vtime(p, FCP_DSQ_INTERACTIVE,
+					 slice_intr_ns, vtime,
+					 enq_flags);
+		stat_intr_dispatches++;
 		return;
 	}
 
-	/* Tier 2: background tasks use the CPU chosen by select_cpu. */
+	/* Tier 2: background tasks are steered to LITTLE cores and FCP_DSQ_BACKGROUND. */
 	s32 target_cpu = scx_bpf_task_cpu(p);
 
-#ifndef SCX_FCP_ZERO_HINT
 	if (cpu_is_big(target_cpu))
 		target_cpu = get_cluster_home_cpu(p, false);
-#endif
 
 	if (LINUX_KERNEL_VERSION >= KERNEL_VERSION(6, 12, 0) &&
+	    target_cpu != scx_bpf_task_cpu(p) &&
 	    target_cpu >= 0 && target_cpu < MAX_CPUS &&
+	    !cpu_is_big(target_cpu) &&
 	    bpf_cpumask_test_cpu(target_cpu, p->cpus_ptr)) {
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL_ON | target_cpu,
 				   slice_bg_ns, enq_flags);
@@ -1159,7 +1084,7 @@ void BPF_STRUCT_OPS(fcp_enqueue, struct task_struct *p, u64 enq_flags)
 		scx_bpf_dsq_insert_vtime(p, FCP_DSQ_BACKGROUND, slice_bg_ns,
 					 vtime + slice_bg_ns, enq_flags);
 	}
-	__sync_fetch_and_add(&stat_bg_dispatches, 1);
+	stat_bg_dispatches++;
 }
 
 void BPF_STRUCT_OPS(fcp_dispatch, s32 cpu, struct task_struct *prev)
@@ -1171,7 +1096,7 @@ void BPF_STRUCT_OPS(fcp_dispatch, s32 cpu, struct task_struct *prev)
 	if (cctx && cctx->consec_crit_dispatches >= starvation_period) {
 		cctx->consec_crit_dispatches = 0;
 		if (scx_bpf_dsq_move_to_local(FCP_DSQ_BACKGROUND, 0)) {
-			__sync_fetch_and_add(&stat_starvation_rescues, 1);
+			stat_starvation_rescues++;
 			return;
 		}
 	}
@@ -1268,14 +1193,19 @@ void BPF_STRUCT_OPS(fcp_stopping, struct task_struct *p, bool runnable)
 		 * Revoke a token on a real block after 2.5ms of service, or
 		 * after a short run. Preemption does not start a new epoch.
 		 */
-		if (fcp_token_active(tctx, now) &&
-		    (tctx->token_service_ns >= FCP_REVOKE_SERVICE_NS ||
-		     runtime_ns < FCP_SHORT_YIELD_NS))
+		if (!fcp_root_read(tctx) && fcp_token_active(tctx, now) &&
+		    tctx->token_service_ns >= FCP_REVOKE_SERVICE_NS)
 			fcp_token_revoke(tctx);
 	} else {
 		tctx->last_stop_was_block = 0;
-		if (fcp_token_active(tctx, now) &&
-		    runtime_ns < FCP_SHORT_YIELD_NS)
+		if (tctx->is_frame_root &&
+		    tctx->root_source == FCP_ROOT_SRC_BEHAVIOR &&
+		    tctx->last_woke_at_ns > 0 && now > tctx->last_woke_at_ns &&
+		    now - tctx->last_woke_at_ns > 100ULL * NSEC_PER_MSEC)
+			fcp_root_demote(tctx, now);
+		if (!fcp_root_read(tctx) && fcp_token_active(tctx, now) &&
+		    (tctx->token_service_ns >= FCP_REVOKE_SERVICE_NS ||
+		     runtime_ns < FCP_SHORT_YIELD_NS))
 			fcp_token_revoke(tctx);
 	}
 
