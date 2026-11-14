@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one JankBench List View Fling sample under one scheduling policy.
+# Run AOSP JankBench across all 8 benchmarks (BM_ID=0,1,2,3,4,5,6,7) under one scheduling policy.
 #
 # Usage:
 #   tests/jankbench/run_jankbench.sh -p scx_fcp_behavioral -n 1
@@ -11,6 +11,8 @@
 #   SCX_ROOT     scx workspace               (default: $HOME/workspace/scx)
 #   RESULTS_ROOT result directory            (default: <repo>/results/jankbench)
 #   BIN_DIR      scheduler binary directory  (default: $SCX_ROOT/target/release)
+#   BM_ID        enabled benchmark IDs       (default: 0,1,2,3,4,5,6,7)
+#   RUN_COUNT    iterations per benchmark    (default: 10)
 #
 # Policies: eevdf, scx_fcp, scx_fcp_named, scx_fcp_behavioral,
 #           scx_lavd, scx_p2dq. A policy may also name a binary in BIN_DIR
@@ -25,7 +27,7 @@ RESULTS_ROOT=${RESULTS_ROOT:-$REPO_ROOT/results/jankbench}
 BIN_DIR=${BIN_DIR:-$SCX_ROOT/target/release}
 REMOTE=${REMOTE:-/data/local/tmp/scx}
 REBOOT=${REBOOT:-0}
-RUN_COUNT=${RUN_COUNT:-3}
+RUN_COUNT=${RUN_COUNT:-10}
 NO_SQLITE_WAIT=${NO_SQLITE_WAIT:-120}
 APK=${JANKBENCH_APK:-}
 
@@ -87,7 +89,7 @@ wait_device() {
 
 kill_stale() {
     local name pid
-    for name in scx_fcp scx_fcp_named scx_fcp_behavioral scx_fcp_v_a_depth3_tgid1ms scx_lavd scx_p2dq; do
+    for name in scx_fcp scx_fcp_named scx_fcp_behavioral scx_lavd scx_p2dq; do
         pid=$(sh_ "pidof $name" | tr -d '\r')
         [ -n "$pid" ] && sh_ "kill -15 $pid" >/dev/null 2>&1 || true
     done
@@ -130,6 +132,8 @@ prepare_device() {
     selinux=$(sh_ 'getenforce' | tr -d '\r')
     [ "$selinux" = Permissive ] || log "warning: SELinux is $selinux"
     sh_ 'svc power stayon true' >/dev/null 2>&1 || true
+    sh_ "setprop debug.hwui.renderer opengl" >/dev/null 2>&1 || true
+    sh_ 'settings put global animator_duration_scale 1' >/dev/null 2>&1 || true
     sh_ 'settings put global stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
     sh_ 'settings put system screen_off_timeout 2147483647' >/dev/null 2>&1 || true
     sh_ 'settings put secure lockscreen.disabled 1' >/dev/null 2>&1 || true
@@ -259,7 +263,7 @@ sh_ 'logcat -c' >/dev/null 2>&1 || true
 sh_ 'input keyevent KEYCODE_WAKEUP' >/dev/null 2>&1 || true
 sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
 
-BM_ID=${BM_ID:-0}
+BM_ID=${BM_ID:-0,1,2,3,4,5,6,7}
 BM_CMD="am start -W -n $BM_ACT --eia com.android.benchmark.EXTRA_ENABLED_BENCHMARK_IDS $BM_ID --ei com.android.benchmark.EXTRA_RUN_COUNT $RUN_COUNT --ez com.android.benchmark.FINISH_WHEN_DONE true"
 START=$(date -Iseconds)
 log "benchmark: $BM_CMD"
@@ -317,7 +321,7 @@ manifest = {
     "scheduler_sha256": env.get("SCHED_SHA") or "none",
     "scx_state_before": read("state_before.txt").splitlines()[0],
     "scx_ops_before": read("state_before.txt").splitlines()[1],
-    "workload": "AOSP JankBench 2.2 List View Fling (benchmark id 0)",
+    "workload": "AOSP JankBench 2.2 Full Suite (benchmark ids 0..7)",
     "benchmark_command": env["BM_CMD"],
     "run_count": int(env["RUN_COUNT"]),
     "app_package": "com.android.benchmark",
