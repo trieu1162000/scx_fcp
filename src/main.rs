@@ -142,9 +142,8 @@ fn main() -> Result<()> {
 
     try_set_rlimit_infinity();
 
-    let nr_cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
+    let nr_cpus = libbpf_rs::num_possible_cpus()
+        .unwrap_or(8)
         .min(fcp_consts_MAX_CPUS as usize);
 
     let (caps, is_big) = detect_cpu_capacities(nr_cpus, &opts.big_cpus);
