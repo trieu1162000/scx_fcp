@@ -17,6 +17,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+[ -f "$REPO_ROOT/artifact/config.env" ] && . "$REPO_ROOT/artifact/config.env"
 SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
 SCX_SUB=${SCX_SUB:-$SCX_ROOT/scheds/rust/scx_fcp}
 BIN_DIR=${BIN_DIR:-$REPO_ROOT/build/bin}

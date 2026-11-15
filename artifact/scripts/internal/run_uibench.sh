@@ -74,6 +74,7 @@ done
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAPER=$(cd "$HERE/../.." && pwd)
+[ -f "$PAPER/config.env" ] && . "$PAPER/config.env"
 OUTROOT=${OUTROOT:-$PAPER/results/uibench_stable}
 APKDIR=${APKDIR:-$PAPER/workloads}
 

@@ -82,14 +82,15 @@ rm -rf "$WORKDIR"
 
 ## 3. Launching Cuttlefish across 4, 8, 16, and 32 vCPUs
 
+Set `CF_HOME`, `SERIAL`, `CPUS` (and optional `KERNEL` / `INITRAMFS`) in
+[`artifact/config.env`](config.env), then launch via `./artifact/pipeline.sh launch`
+(or override `CPUS` inline):
+
 ```bash
-export CF_HOME=/path/to/cuttlefish
-export SERIAL=127.0.0.1:6520
+# Default (reads CF_HOME, SERIAL, CPUS=32 from artifact/config.env):
+./artifact/pipeline.sh launch
 
-# Boot with the prebuilt 6.12.74-android16 boot.img (default):
-CPUS=32 MEMORY_MB=8192 artifact/scripts/launch_cuttlefish.sh
-
-# Or boot with a custom mainline bzImage + initramfs.img:
-KERNEL=/path/to/bzImage INITRAMFS=/path/to/initramfs.img \
-  CPUS=32 MEMORY_MB=8192 artifact/scripts/launch_cuttlefish.sh
+# Or override vCPU count / custom kernel inline:
+CPUS=16 ./artifact/pipeline.sh launch
+KERNEL=/path/to/bzImage INITRAMFS=/path/to/initramfs.img ./artifact/pipeline.sh launch
 ```

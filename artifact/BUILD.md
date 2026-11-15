@@ -23,18 +23,15 @@ Additional toolchains:
 - Clang / LLVM `19–22+` (required for BPF arena / `may_goto` in `scx_lavd` and `scx_p2dq`)
 - Android SDK + JDK (optional: for building the workload APKs with Gradle without cloning a full AOSP tree):
 
-```bash
-export ANDROID_HOME=${ANDROID_HOME:-/path/to/Android/Sdk}
-export JAVA_HOME=${JAVA_HOME:-/path/to/jdk}
-```
+Set `ANDROID_HOME`, `JAVA_HOME`, and `AOSP_TESTS` in [`artifact/config.env`](config.env) (or in your shell environment).
 
 ## 2. Scheduler and synthetic benchmark
 
 The canonical scheduler source lives at `$SCX_ROOT/scheds/rust/scx_fcp` (mirrored and developed in `src/`).
 
+Set `SCX_ROOT` in [`artifact/config.env`](config.env), then run from the repository root:
+
 ```bash
-cd /path/to/scx_fcp
-export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
 ./artifact/pipeline.sh build
 ```
 
@@ -54,10 +51,7 @@ and writes `artifact/build/bin/SHA256SUMS`.
 To invoke `build_static.sh` directly:
 
 ```bash
-export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
-export ARTIFACT=${ARTIFACT:-$PWD/artifact}
-SCX_ROOT="$SCX_ROOT" BIN_DIR="$ARTIFACT/build/bin" BUILD_BASELINES=1 \
-  ./scripts/build_static.sh
+./scripts/build_static.sh
 ```
 
 ## 3. JankBench APK (`com.android.benchmark`)
@@ -107,11 +101,10 @@ cp -f "$ANDROID_PRODUCT_OUT/testcases/JankBench/x86_64/JankBench.apk" \
 ### Build Option B: Standalone Android SDK + JDK + Gradle (no AOSP tree required)
 
 ```bash
-export AOSP_TESTS=${AOSP_TESTS:-$HOME/work/aosp-tests}
 cd "$AOSP_TESTS/JankBenchGradle"
 ./gradlew :app:assembleDebug
 cp -f app/build/outputs/apk/debug/app-debug.apk \
-  artifact/workloads/JankBench-platform-signed.apk
+  /path/to/scx_fcp/artifact/workloads/JankBench-platform-signed.apk
 ```
 
 ## 4. UiBench and UiBenchJankTests APKs (`com.android.test.uibench`)
@@ -149,13 +142,12 @@ cp -f "$ANDROID_PRODUCT_OUT/testcases/UiBenchJankTests/x86_64/UiBenchJankTests.a
 ### Build Option B: Standalone Android SDK + JDK + Gradle (no AOSP tree required)
 
 ```bash
-export AOSP_TESTS=${AOSP_TESTS:-$HOME/work/aosp-tests}
 cd "$AOSP_TESTS/UiBenchSuiteGradle"
 ./gradlew :app:assembleDebug :janktests:assembleDebug
 cp -f app/build/outputs/apk/debug/app-debug.apk \
-  artifact/workloads/UiBench-app-debug.apk
+  /path/to/scx_fcp/artifact/workloads/UiBench-app-debug.apk
 cp -f janktests/build/outputs/apk/debug/janktests-debug.apk \
-  artifact/workloads/UiBenchJankTests-debug.apk
+  /path/to/scx_fcp/artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
 ## 5. Expected build artifacts

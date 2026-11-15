@@ -7,12 +7,15 @@ paper's synthetic scaling (`fcp_frame_bench`), AOSP `JankBench`, AOSP
 
 ## Quick start
 
+1. Edit [`artifact/config.env`](config.env) once to set your host paths (`SCX_ROOT`, `CF_HOME`, `SERIAL`, `CPUS`), or override any variable inline.
+2. Run the pipeline from the repository root:
+
 ```bash
 ./artifact/pipeline.sh build
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
-./artifact/pipeline.sh full --out results/full14
-./artifact/pipeline.sh analyze results/full14 --out-dir results/full14/integration
+./artifact/pipeline.sh full --out artifact/results/full14
+./artifact/pipeline.sh analyze artifact/results/full14 --out-dir artifact/results/full14/integration
 ```
 
 ## Documentation map

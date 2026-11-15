@@ -19,6 +19,7 @@ SERIAL=${SERIAL:-0.0.0.0:6520}
 ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$ROOT/config.env" ] && . "$ROOT/config.env"
 RESULTS_ROOT=${RESULTS_ROOT:-$ROOT/results/jankbench}
 OUT="$RESULTS_ROOT/$POLICY/run-$RUN"
 # Android SQLiteOpenHelper creates the file without an extension.

@@ -2,21 +2,15 @@
 
 ## Quick start
 
+Configure [`artifact/config.env`](config.env) once (`SCX_ROOT`, `CF_HOME`, `SERIAL`, `CPUS`), place the workload APKs in `artifact/workloads/`, and run:
+
 ```bash
-cd /path/to/scx_fcp
-export SCX_ROOT=/path/to/scx
-
 ./artifact/pipeline.sh build
-
-# Put the workload APKs in artifact/workloads/.
-export CF_HOME=/path/to/cuttlefish
-export SERIAL=127.0.0.1:6520 # or 0.0.0.0:6520
-
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
-./artifact/pipeline.sh full --out results/full14
-./artifact/pipeline.sh analyze results/full14 \
-  --out-dir results/full14/integration
+./artifact/pipeline.sh full --out artifact/results/full14
+./artifact/pipeline.sh analyze artifact/results/full14 \
+  --out-dir artifact/results/full14/integration
 ```
 
 ## Overview
@@ -54,23 +48,13 @@ The artifact launcher is:
 artifact/scripts/launch_cuttlefish.sh
 ```
 
-It requires the Cuttlefish host, kernel, and initramfs paths:
+It reads `CF_HOME`, `SERIAL`, `CPUS`, `MEMORY_MB`, `TOPO`, and `PROXY_EXEC` from [`artifact/config.env`](config.env) (any variable can be overridden inline):
 
 ```bash
-export CF_HOME=/path/to/cuttlefish
-export SERIAL=127.0.0.1:6520 # or 0.0.0.1:6520
-
-# 4 vCPU
-CPUS=4 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
-
-# 8 vCPU
-CPUS=8 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
-
-# 16 vCPU
-CPUS=16 MEMORY_MB=6144 bash artifact/scripts/launch_cuttlefish.sh
-
-# 32 vCPU
-CPUS=32 MEMORY_MB=8192 bash artifact/scripts/launch_cuttlefish.sh
+CPUS=4  ./artifact/pipeline.sh launch
+CPUS=8  ./artifact/pipeline.sh launch
+CPUS=16 ./artifact/pipeline.sh launch
+CPUS=32 ./artifact/pipeline.sh launch
 ```
 
 `launch_cuttlefish.sh` passes `-cpus=N -memory_mb=M` to `launch_cvd`, connects
@@ -96,7 +80,7 @@ device ready: 127.0.0.1:6520
 Run the smallest useful cell first:
 
 ```bash
-SERIAL=127.0.0.1:6520 ./artifact/pipeline.sh smoke
+./artifact/pipeline.sh smoke
 ```
 
 Check:
@@ -135,14 +119,8 @@ adb -s "$SERIAL" shell "
 From the repository root:
 
 ```bash
-export SERIAL=127.0.0.1:6520
-export ADB=${ADB:-adb}
-export OUT=$PWD/artifact/results/full14_$(date +%Y%m%d-%H%M%S)
-export UI_ALLOW_INVALID=none
-
-export CF_HOME=/path/to/cuttlefish
-RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
-  ./artifact/pipeline.sh full --out "$OUT"
+OUT=$PWD/artifact/results/full14_$(date +%Y%m%d-%H%M%S)
+./artifact/pipeline.sh full --out "$OUT"
 ```
 
 Defaults:

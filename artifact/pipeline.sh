@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ARTIFACT=$(cd "$(dirname "$0")" && pwd)
+[ -f "$ARTIFACT/config.env" ] && . "$ARTIFACT/config.env"
 ROOT=$(cd "$ARTIFACT/.." && pwd)
 SCRIPTS="$ARTIFACT/scripts"
 INTERNAL="$SCRIPTS/internal"

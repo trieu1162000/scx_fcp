@@ -6,6 +6,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$ROOT/config.env" ] && . "$ROOT/config.env"
 SERIAL=${SERIAL:-0.0.0.0:6520}
 ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")

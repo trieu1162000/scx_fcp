@@ -20,11 +20,12 @@
 #   WORKLOADS_DIR  host directory with JankBench/UiBench APKs
 set -euo pipefail
 
-: "${CF_HOME:?set CF_HOME to the Cuttlefish host directory}"
-
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ARTIFACT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 REPO_ROOT=$(cd "$ARTIFACT_DIR/.." && pwd)
+[ -f "$ARTIFACT_DIR/config.env" ] && . "$ARTIFACT_DIR/config.env"
+
+: "${CF_HOME:?set CF_HOME in artifact/config.env or environment}"
 
 CPUS=${CPUS:-16}
 case "$CPUS" in
