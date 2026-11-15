@@ -24,7 +24,7 @@ image and `cvd-host_package.tar.gz` from Android CI:
 Unpack into `CF_HOME`:
 
 ```bash
-export CF_HOME=/path/to/cuttlefish
+source artifact/config.env
 mkdir -p "$CF_HOME"
 unzip aosp_cf_x86_64_only_phone-img-<build-id>.zip -d "$CF_HOME"
 tar -xzf cvd-host_package.tar.gz -C "$CF_HOME"

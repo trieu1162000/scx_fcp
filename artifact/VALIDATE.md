@@ -69,8 +69,8 @@ Expected matrix:
 
 ```text
 14 tests
-4 policies
-56 cells
+6 default policies
+84 cells
 10 accepted runs/repetitions per cell
 ```
 

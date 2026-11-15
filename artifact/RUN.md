@@ -18,7 +18,8 @@ Configure [`artifact/config.env`](config.env) once (`SCX_ROOT`, `CF_HOME`, `SERI
 This document covers launching Android Cuttlefish across **4, 8, 16, and 32 vCPUs** (`Symmetric` and `Asymmetric` `446:1024` topologies) and running:
 1. the 10-run multi-core scaling evaluation on `fcp_frame_bench` (Table 1);
 2. the full 8-benchmark AOSP `JankBench` suite (`BM_ID=0,1,2,3,4,5,6,7`, Table 2);
-3. the full 6-benchmark AOSP `UiBenchJankTests` suite (`6/6` passed, Table 3).
+3. the full 6-benchmark AOSP `UiBenchJankTests` suite (6 tests; `bitmap-upload`
+   needs the fixed APK, otherwise it is reported as known-invalid, Table 3).
 
 The public entrypoint is `artifact/pipeline.sh`:
 
@@ -86,8 +87,8 @@ Run the smallest useful cell first:
 Check:
 
 ```bash
-cat "$OUT/full_matrix_status.json"
-cat "$OUT/jankbench/list-view-fling/validity.json"
+cat artifact/results/smoke/full_matrix_status.json
+cat artifact/results/smoke/jankbench/list-view-fling/validity.json
 ```
 
 Do not start the full campaign until this cell is valid.
@@ -135,8 +136,7 @@ Runs:      10 valid runs/reps per (test, policy)
 
 `UI_ALLOW_INVALID=none` is important for the final run: it makes
 `bitmap-upload` required instead of silently “known-invalid”. Use the fixed
-UiBench APK first. (Do not export an empty value: the current shell default
-would restore `bitmap-upload`.)
+UiBench APK first.
 
 ### Resume
 
@@ -176,8 +176,8 @@ The integration step must report:
 
 ```text
 14 tests
-4 policies
-56/56 required cells
+6 default policies
+84/84 required cells
 10 valid units per cell
 ```
 
