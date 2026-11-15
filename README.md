@@ -126,6 +126,16 @@ fan-out cap).
 | **Android Cuttlefish** (`4/8/16/32` vCPUs) | Android 16 GKI `6.12.74` (prebuilt `boot.img`) & mainline `7.2.0-rc9` | `x86_64` | This repository (`scx_fcp` + `scx`) |
 | **Qualcomm SA8155P** (`4+3+1` Kryo 485) | Android 14 GKI `6.1.145` + `sched_ext` backport | `aarch64` | [`trieu1162000/scx-6.1`](https://github.com/trieu1162000/scx-6.1) |
 
+## Use cases
+
+`scx_fcp` targets latency-sensitive interactive and display workloads on
+heterogeneous Android systems, where UI, render, SurfaceFlinger, and display
+handoffs form a synchronous per-frame critical path.
+
+It is not intended for throughput-oriented batch or HPC workloads on
+homogeneous servers, or for deployments that require hard cgroup bandwidth
+control through `cpu.max`.
+
 ## Options
 
 - `-f`, `--frame-budget-us`: frame budget used for token TTL and deadlines
@@ -144,6 +154,46 @@ fan-out cap).
   one background task (default `128`).
 - `-s`, `--stats-interval-s`: telemetry print interval in seconds (default `2`,
   `0` disables periodic printing).
+
+## Topology discovery
+
+The loader sizes its CPU arrays with `libbpf_rs::num_possible_cpus()` (capped at
+`MAX_CPUS`), then selects the big/Prime set in this order:
+
+1. If `--big-cpus` is set, listed CPUs get capacity `1024`; all others get
+   `446`.
+2. Otherwise, if `cpu_capacity` is asymmetric, CPUs at or above the midpoint
+   of the observed minimum and maximum are marked big.
+3. If `cpu_capacity` is missing or uniform, the upper half of possible CPUs is
+   marked big and the lower half LITTLE.
+
+The resulting capacity and big-core masks are written to BPF `.rodata`.
+
+## Telemetry
+
+The default build prints four counter lines every stats interval (`2 s` by
+default):
+
+```text
+[scx_fcp] crit=... intr=... bg=... big=... little=... preempt_kicks=... rescues=...
+[scx_fcp] roots beh=... comm=... pid=... prom=... demote=... suppressed=... token_sel=... token_enq=...
+[scx_fcp] token issued=... inherited=... edges elig=... inh=... sync=... tgid=... async_rej=... depth_block=... revoke=... expire=... first_big=.../... depth_hist=...
+[scx_fcp] tune cooldown_blocks=... edge_budget_rej=... tgid_window_rej=... kick_capped=...
+```
+
+The counter sources are in [`src/main.rs`](src/main.rs); `-s 0` disables
+periodic printing.
+
+## Kernel requirements
+
+- `CONFIG_SCHED_CLASS_EXT=y`
+- `CONFIG_DEBUG_INFO_BTF=y`
+- `CONFIG_BPF=y`, `CONFIG_BPF_SYSCALL=y`, `CONFIG_BPF_JIT=y`
+- `CONFIG_SCHED_PROXY_EXEC=n` on Android GKI kernels, or boot with
+  `sched_proxy_exec=0` when the image exposes the override
+
+See [`artifact/SETUP.md`](artifact/SETUP.md) for the full image and kernel
+setup, including the Cuttlefish boot override.
 
 ## Repository layout
 
@@ -183,3 +233,29 @@ BIN_DIR=$PWD/build/bin SERIAL=127.0.0.1:6520 \
 For complete environment setup, Cuttlefish `4/8/16/32`-vCPU launch, APK build
 instructions, validation rules, and full paper table reproduction, start at
 **[`artifact/README.md`](artifact/README.md)**.
+
+## FAQ
+
+**Why does a brief helper thread need a token?**
+
+A helper that wakes only once per frame can look light in isolation. If the UI
+thread blocks on that helper, the frame waits for wherever the helper runs.
+Token inheritance keeps the helper in the critical tier for the rest of the
+frame.
+
+**Does a token live forever?**
+
+No. It expires at the frame budget, and inheritance stops at depth 5. Non-root
+tokens are revoked after 4.0 ms of cumulative service or after a short
+preempted yield below 50 us; frame roots retain their token across preemption
+within the active frame epoch.
+
+**Does the scheduler use thermal debt or burst utilization?**
+
+No. The decision path uses root and token state, runtime history, CPU capacity
+class, and idle state.
+
+**How do I mark a custom benchmark thread as a root?**
+
+Use `--frame-pids TID` with the default or named build. The zero-hint build
+accepts behavioral admission only.
