@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ARTIFACT=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$ARTIFACT/.." && pwd)
 SCRIPTS="$ARTIFACT/scripts"
 INTERNAL="$SCRIPTS/internal"
 
@@ -34,7 +35,7 @@ case "$cmd" in
   build)
     export BUILD_BASELINES=${BUILD_BASELINES:-1}
     export BIN_DIR=${BIN_DIR:-$ARTIFACT/build/bin}
-    exec "$INTERNAL/build_static.sh" "$@"
+    exec "$ROOT/scripts/build_static.sh" "$@"
     ;;
   launch)
     exec "$SCRIPTS/launch_cuttlefish.sh" "$@"

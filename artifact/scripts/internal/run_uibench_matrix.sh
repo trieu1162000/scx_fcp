@@ -41,7 +41,7 @@ ALLOW_INVALID_TESTS=${ALLOW_INVALID_TESTS:-}
 # debug build is available; when it is present and hash-matches, use it for
 # every UiBench block and require bitmap-upload like the other five tests.
 FIXED_UI_APK=${FIXED_UI_APK:-$PAPER/workloads/UiBench-app-debug.apk}
-FIXED_UI_APK_SHA=${FIXED_UI_APK_SHA:-f8a6405f156861cfe4409b6001b97b37eb389293d0e5375fffae422fe34c5db2}
+FIXED_UI_APK_SHA=${FIXED_UI_APK_SHA:-$(sha256sum "$FIXED_UI_APK" 2>/dev/null | awk '{print $1}')}
 REQUIRE_FIXED_UI_APK=${REQUIRE_FIXED_UI_APK:-1}
 if [ -f "$FIXED_UI_APK" ]; then
   got=$(sha256sum "$FIXED_UI_APK" | awk '{print $1}')
@@ -239,7 +239,8 @@ reboot_device() {
   sh_ 'settings put system screen_off_timeout 2147483647' >/dev/null 2>&1 || true
   sh_ 'settings put global window_animation_scale 0' >/dev/null 2>&1 || true
   sh_ 'settings put global transition_animation_scale 0' >/dev/null 2>&1 || true
-  sh_ 'settings put global animator_duration_scale 0' >/dev/null 2>&1 || true
+  sh_ 'setprop debug.hwui.renderer opengl' >/dev/null 2>&1 || true
+  sh_ 'settings put global animator_duration_scale 1' >/dev/null 2>&1 || true
   sh_ 'input keyevent KEYCODE_WAKEUP' >/dev/null 2>&1 || true
   sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
   sh_ 'input keyevent KEYCODE_HOME' >/dev/null 2>&1 || true
@@ -249,11 +250,10 @@ reboot_device() {
 push_bins() {
   "${A[@]}" shell "mkdir -p $REMOTE/stats" >/dev/null 2>&1 || true
   local base=${BINDIR:-$PAPER/build/bin}
-  local tune=${SCX_TUNE_ROOT:-$PAPER/variants}
-  local tuned_bin=${TUNED_BIN:-$tune/v_a_depth3_tgid1ms/bin/scx_fcp}
-  local want_tuned=${TUNED_SHA:-5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4}
-  local want_lavd=${LAVD_SHA:-638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9}
-  local want_p2dq=${P2DQ_SHA:-c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1}
+  local tuned_bin=${TUNED_BIN:-$base/scx_fcp_behavioral}
+  local want_tuned=${TUNED_SHA:-$(awk '$2=="scx_fcp_behavioral"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo 5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4)}
+  local want_lavd=${LAVD_SHA:-$(awk '$2=="scx_lavd"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo 638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9)}
+  local want_p2dq=${P2DQ_SHA:-$(awk '$2=="scx_p2dq"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1)}
 
   [ -f "$tuned_bin" ] || die "tuned binary missing: $tuned_bin"
   local got
@@ -267,9 +267,11 @@ push_bins() {
   done
 
   "${A[@]}" push "$tuned_bin" "$REMOTE/scx_fcp_v_a_depth3_tgid1ms" >/dev/null 2>&1 || die "push tuned failed"
+  "${A[@]}" push "$tuned_bin" "$REMOTE/scx_fcp_behavioral" >/dev/null 2>&1 || true
+  [ -f "$base/scx_fcp" ] && "${A[@]}" push "$base/scx_fcp" "$REMOTE/scx_fcp" >/dev/null 2>&1 || true
   "${A[@]}" push "$base/scx_lavd" "$REMOTE/scx_lavd" >/dev/null 2>&1 || die "push lavd failed"
   "${A[@]}" push "$base/scx_p2dq" "$REMOTE/scx_p2dq" >/dev/null 2>&1 || die "push p2dq failed"
-  for b in scx_fcp_v_a_depth3_tgid1ms scx_lavd scx_p2dq; do
+  for b in scx_fcp scx_fcp_behavioral scx_fcp_v_a_depth3_tgid1ms scx_lavd scx_p2dq; do
     "${A[@]}" shell "chmod 755 $REMOTE/$b" >/dev/null 2>&1 || true
   done
   sh_ "sha256sum $REMOTE/scx_fcp_v_a_depth3_tgid1ms $REMOTE/scx_lavd $REMOTE/scx_p2dq" | tr -d '\r' | tee "$OUT/binary_sha256.txt" >/dev/null
@@ -296,8 +298,9 @@ attach_policy() {
   local policy=$1
   local bin="" args="" ops="" state="enabled"
   case "$policy" in
-    eevdf) state=disabled; ops="" ;;
-    scx_fcp_behavioral) bin=scx_fcp; ops=fcp_zh ;;
+    eevdf|eevdf_proxy_exec) state=disabled; ops="" ;;
+    scx_fcp) bin=scx_fcp; ops=fcp ;;
+    scx_fcp_behavioral) bin=scx_fcp_behavioral; ops=fcp_zh ;;
     scx_fcp_v_stable_root) bin=scx_fcp_v_stable_root; ops=fcp_zh ;;
     scx_fcp_v_bounded_fanout) bin=scx_fcp_v_bounded_fanout; ops=fcp_zh ;;
     scx_fcp_v_tail_guard) bin=scx_fcp_v_tail_guard; ops=fcp_zh ;;

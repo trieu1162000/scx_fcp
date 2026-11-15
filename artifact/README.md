@@ -1,11 +1,9 @@
-# scx_fcp artifact
+# `scx_fcp` Artifact Evaluation Guide
 
-Reproducibility package for the scx_fcp paper. This directory is the
-**canonical entrypoint** for building and running the evaluation; the design
-dossier remains under `scx_fcp/docs/`.
-
-The package covers the scheduler, workload APKs, Cuttlefish launch, the
-validated matrix, and the aggregation path to paper tables.
+Reproducibility package for the `scx_fcp` paper. This directory provides the
+step-by-step setup, build, execution, and validation pipeline to reproduce the
+paper's synthetic scaling (`fcp_frame_bench`), AOSP `JankBench`, AOSP
+`UiBenchJankTests`, and eBPF runtime overhead measurements.
 
 ## Quick start
 
@@ -13,72 +11,42 @@ validated matrix, and the aggregation path to paper tables.
 ./artifact/pipeline.sh build
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
-./artifact/pipeline.sh full
-./artifact/pipeline.sh analyze --out results/full14
+./artifact/pipeline.sh full --out results/full14
+./artifact/pipeline.sh analyze results/full14 --out-dir results/full14/integration
 ```
 
-## Start here
+## Documentation map
 
-| Need | Document |
-|---|---|
-| Host, Cuttlefish image, kernel, initramfs | [`SETUP.md`](SETUP.md) |
-| Build the scheduler, synthetic bench, and workload APKs | [`BUILD.md`](BUILD.md) |
-| Quick start, Cuttlefish launch, run the matrix | [`RUN.md`](RUN.md) |
-| Fail-fast validity, retries, aggregation | [`VALIDATE.md`](VALIDATE.md) |
-| Paper-to-artifact map and known limitations | this file |
-| Design/ADR/code map | See the source tree's `docs/` dossier (not included in this docs branch) |
+| Step | Document | Contents |
+| :---: | :--- | :--- |
+| **1** | [`SETUP.md`](SETUP.md) | Host prerequisites, Cuttlefish prebuilt image (`6.12.74-android16` `boot.img` with `sched_proxy_exec=0`), optional custom mainline `7.2` kernel build, and `4/8/16/32`-vCPU launch |
+| **2** | [`BUILD.md`](BUILD.md) | Building static `scx_fcp` profiles, baseline schedulers (`scx_lavd`, `scx_p2dq`), `fcp_frame_bench`, ARM64 cross-builds, and AOSP `JankBench` / `UiBench` APKs |
+| **3** | [`RUN.md`](RUN.md) | Running the `4/8/16/32`-vCPU synthetic scaling suite, the full 14-test AOSP matrix (`8` JankBench + `6` UiBench), standalone per-suite runners, and eBPF overhead collection |
+| **4** | [`VALIDATE.md`](VALIDATE.md) | Per-run validity gates (`J1–J12` for JankBench, `GfxMonitor` & process stability for UiBench) and LaTeX/JSON/HTML aggregation |
 
-## Evaluated configuration
+## Evaluated configurations
 
-The full matrix evaluates four policies on a 16-vCPU Android 17 Cuttlefish
-guest:
-
-```text
-eevdf
-scx_fcp                 (zero-hint build)
-scx_p2dq --enable-pelt false
-scx_lavd
-```
-
-The evaluated scheduler source is in `old_5a2e_src/`; the pipeline builds it
-into `artifact/build/bin/scx_fcp_behavioral`.
+1. **Android Cuttlefish (`x86_64`, `4 / 8 / 16 / 32` vCPUs)**:
+   - Topologies: Symmetric SMP (`1024 : 1024`) and Asymmetric `big.LITTLE` (`446 : 1024` capacity ratio via host `crosvm_vcpu` scheduling).
+   - Policies: stock `EEVDF`, `EEVDF` w/ `CONFIG_SCHED_PROXY_EXEC=y`, `scx_p2dq`, `scx_lavd`, `scx_fcp` (`zero-hint` / `scx_fcp_behavioral`), and `scx_fcp` (`Full` / default).
+2. **Physical Qualcomm Snapdragon SA8155P (`aarch64`, 8-Core `4+3+1` Kryo 485)**:
+   - Evaluated using the companion Linux `6.1.145` backport repository: [`trieu1162000/scx-6.1`](https://github.com/trieu1162000/scx-6.1).
 
 ## Evaluation scope
 
 ```text
-JankBench: 8 benchmark IDs (0..7)
-UiBench:   6 test methods
-Policies:  4
-Runs:      10 valid runs/reps per (test, policy)
-Cells:     14 tests x 4 policies = 56 required cells
+Synthetic VSYNC DAG: 4, 8, 16, 32 vCPUs (Symmetric & Asymmetric, 60/90/120 Hz)
+AOSP JankBench:      8 benchmark IDs (BM_ID=0..7)
+AOSP UiBench:        6 test methods (5 scrolling/rendering + BitmapUpload)
+Repetitions:         10 valid runs/repetitions per (test, policy) cell
+eBPF Overhead:       /proc/sys/kernel/bpf_stats_enabled (run_time_ns, run_cnt)
 ```
 
-Validity is checked **per run/rep**. Invalid JankBench runs and invalid UiBench
-blocks are moved aside and rerun; they are never pooled into a result. See
-`RUN.md` for the exact criteria.
+## Packaged entrypoints
 
-## What is packaged here
-
-```text
-SETUP.md              host, Cuttlefish image, kernel, initramfs
-BUILD.md              scheduler build, APK build
-RUN.md                quick start, Cuttlefish launch, full matrix, analysis
-scripts/launch_cuttlefish.sh  parameterized 4/8/16/32-vCPU launcher
-configs/              kernel/device/Cuttlefish/policy configs (added at freeze)
-old_5a2e_src/         frozen scheduler source snapshot
-expected/             planned expected-output schema and sample tables
-```
-
-The public pipeline is:
-
-```text
-artifact/pipeline.sh     build | launch | smoke | full | resume | analyze
-```
-
-Per-benchmark adapters stay under `artifact/scripts/internal/` and are hidden
-behind the pipeline interface.
-
-## Not included
-
-- The Cuttlefish system image (obtain the matching AOSP 17 image separately).
-- The physical SA8155P board and its measurements.
+- **Unified pipeline (`artifact/pipeline.sh`)**: `build | launch | smoke | full | resume | analyze`
+- **Cuttlefish launcher (`artifact/scripts/launch_cuttlefish.sh`)**: parameterized `4/8/16/32`-vCPU guest launcher
+- **Standalone suite harnesses (`../tests/`)**:
+  - `tests/synthetic/run_fcp_frame_bench.sh`
+  - `tests/jankbench/run_jankbench.sh` & `tests/jankbench/summarize_jankbench.py`
+  - `tests/uibench/run_uibench.sh`, `tests/uibench/extract_uibench.py`, & `tests/uibench/summarize_uibench.py`

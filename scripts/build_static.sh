@@ -35,6 +35,15 @@ warn() { echo "build_static: warning: $*" >&2; }
 [ -d "$SCX_SUB" ] || die "missing scheduler source: $SCX_SUB"
 [ -f "$SCX_SUB/Cargo.toml" ] || die "missing $SCX_SUB/Cargo.toml"
 
+for cmd in cargo rustc make cc file readelf sha256sum; do
+    command -v "$cmd" >/dev/null 2>&1 || die "missing host tool '$cmd'; see artifact/BUILD.md §1 (sudo apt-get install -y build-essential pkg-config libelf-dev libzstd-dev zlib1g-dev clang llvm lld bpftool pahole)"
+done
+for lib in /usr/lib/x86_64-linux-gnu/libelf.a /usr/lib/x86_64-linux-gnu/libz.a; do
+    if [ "$TARGET" = "x86_64-unknown-linux-gnu" ] && [ ! -f "$lib" ]; then
+        die "missing static library $lib; run: sudo apt-get install -y libelf-dev libzstd-dev zlib1g-dev pkg-config (see artifact/BUILD.md §1)"
+    fi
+done
+
 if [ -z "${ZSTD_A:-}" ]; then
     for candidate in \
         /usr/lib/x86_64-linux-gnu/libzstd.a \

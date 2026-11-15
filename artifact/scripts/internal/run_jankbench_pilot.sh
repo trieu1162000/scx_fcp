@@ -51,14 +51,16 @@ BENCH_NAME=${BENCH_NAME:-unknown-$BM_ID}
 BENCH_SLUG=${BENCH_SLUG:-id$BM_ID}
 
 case "$POLICY" in
-  eevdf)
+  eevdf|eevdf_proxy_exec)
     BIN="" ; ARGS="" ; OPS="" ;;
   scx_lavd)
     BIN=scx_lavd ; ARGS="" ; OPS=lavd ;;
   scx_p2dq_pelt_off)
     BIN=scx_p2dq ; ARGS="--enable-pelt false" ; OPS=p2dq ;;
-  scx_fcp_zh)
-    BIN=scx_fcp ; ARGS="" ; OPS=fcp_zh ;;
+  scx_fcp)
+    BIN=scx_fcp ; ARGS="" ; OPS=fcp ;;
+  scx_fcp_zh|scx_fcp_behavioral)
+    BIN=scx_fcp_behavioral ; ARGS="" ; OPS=fcp_zh ;;
   scx_fcp_no_token)
     BIN=scx_fcp_notoken ; ARGS="" ; OPS=fcp_zh ;;
   scx_fcp_named)
@@ -526,7 +528,7 @@ log "boot ready kernel=$(sh_ 'uname -r' | tr -d '\r') nproc=$(sh_ 'nproc' | tr -
 
 STATE_BEFORE=$(state)
 OPS_BEFORE=$(ops)
-if [ "$POLICY" = eevdf ]; then
+if [ "$POLICY" = eevdf ] || [ "$POLICY" = eevdf_proxy_exec ]; then
   [ "$STATE_BEFORE" = "disabled" ] || die "EEVDF requested but sched_ext state=$STATE_BEFORE ops=$OPS_BEFORE"
 else
   launch_scheduler

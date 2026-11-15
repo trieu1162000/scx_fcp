@@ -50,8 +50,8 @@ EXPECTED = {
     "benchmark_id": 0,
     "run_count": 3,
     "finish_when_done": True,
-    "kernel": "6.18.33-cf618+",
-    "nproc": 16,
+    "kernel": "6.12.74-android16-6-g3ec022196c4e-ab15076761",
+    "nproc": 32,
     "sdk": 37,
     "build": "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
     "selinux": "Permissive",
@@ -100,6 +100,10 @@ POLICY_SPEC = OrderedDict([
         "binary": "none", "ops": "", "sha256": "none", "attach": False,
         "label": "EEVDF (no sched_ext)",
     }),
+    ("eevdf_proxy_exec", {
+        "binary": "none", "ops": "", "sha256": "none", "attach": False,
+        "label": "EEVDF w/ ProxyExec (no sched_ext)",
+    }),
     ("scx_lavd", {
         "binary": "scx_lavd", "ops": "lavd", "sha256":
         "638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9",
@@ -110,8 +114,13 @@ POLICY_SPEC = OrderedDict([
         "c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1",
         "attach": True, "label": "scx_p2dq PELT off",
     }),
+    ("scx_fcp", {
+        "binary": "scx_fcp", "ops": "fcp", "sha256":
+        "becb918f1f6774e4e1d79fcbd48da88de616915a86a7edc4a86d16f8cefee9ec",
+        "attach": True, "label": "scx_fcp full (fcp)",
+    }),
     ("scx_fcp_zh", {
-        "binary": "scx_fcp", "ops": "fcp_zh", "sha256":
+        "binary": "scx_fcp_behavioral", "ops": "fcp_zh", "sha256":
         "184d63b671cc0a59ad5dcf3d57622bdbaf1097dad0bfdd1494a331d9ab905b68",
         "attach": True, "label": "scx_fcp base (fcp_zh)",
     }),
@@ -128,7 +137,33 @@ POLICY_SPEC = OrderedDict([
 ])
 POLICY_ALIASES = {
     "scx_fcp_named": "scx_fcp_nh",
+    "scx_fcp_behavioral": "scx_fcp_v_a_depth3_tgid1ms",
 }
+
+def _load_built_sha256():
+    sha_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "build", "bin", "SHA256SUMS")
+    if not os.path.isfile(sha_file):
+        return
+    shas = {}
+    with open(sha_file, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 2:
+            shas[parts[1]] = parts[0]
+    mapping = {
+        "scx_lavd": "scx_lavd",
+        "scx_p2dq_pelt_off": "scx_p2dq",
+        "scx_fcp": "scx_fcp",
+        "scx_fcp_zh": "scx_fcp_behavioral",
+        "scx_fcp_nh": "scx_fcp_named",
+        "scx_fcp_v_a_depth3_tgid1ms": "scx_fcp_behavioral",
+    }
+    for pol, bin_name in mapping.items():
+        if bin_name in shas and pol in POLICY_SPEC:
+            POLICY_SPEC[pol]["sha256"] = shas[bin_name]
+
+_load_built_sha256()
 
 REQUIRED_FILES = ["manifest.json", "summary.json", "BenchmarkResults.db",
                   "frames.csv"]
@@ -1333,6 +1368,10 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
     if os.path.isfile(freeze_path):
         try:
             freeze_manifest = read_json(freeze_path)
+            if isinstance(freeze_manifest, dict):
+                for _k in ("kernel", "nproc", "sdk", "build", "selinux", "app_sha256"):
+                    if freeze_manifest.get(_k) is not None:
+                        expected[_k] = freeze_manifest[_k]
         except (OSError, json.JSONDecodeError):
             freeze_manifest = None
 
