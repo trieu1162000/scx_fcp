@@ -34,7 +34,7 @@ ARTIFACT=$(cd "$(dirname "$0")/../.." && pwd)
 ROOT=$(cd "$ARTIFACT/.." && pwd)
 PAPER=$ARTIFACT
 ADB=${ADB:-adb}
-SERIAL=${SERIAL:-0.0.0.0:6520}
+SERIAL=${SERIAL:-127.0.0.1:6520}
 POLICIES=${POLICIES:-eevdf,scx_fcp,scx_fcp_v_a_depth3_tgid1ms,scx_p2dq_pelt_off,scx_lavd,eevdf_proxy_exec}
 JANK_TESTS=${JANK_TESTS:-0,1,2,3,4,5,6,7}
 UI_TESTS=${UI_TESTS:-bitmap-upload,shadow-grid-list,inflating-list,slow-bind-recycler,trivial-recycler,layout-cache-low}
@@ -45,20 +45,23 @@ UI_ALLOW_INVALID=${UI_ALLOW_INVALID:-bitmap-upload}
 RUNS=${RUNS:-10}
 RUN_COUNT=${RUN_COUNT:-4}
 WARMUP_ITERATIONS=${WARMUP_ITERATIONS:-1}
+CPUS=${CPUS:-32}
 JANK_ATTEMPTS=${JANK_ATTEMPTS:-5}
 UI_ATTEMPTS=${UI_ATTEMPTS:-3}
 OUT=${OUT:-$PAPER/results/full14_$(date +%Y%m%d-%H%M%S)}
-OLD=${OLD:-$ARTIFACT/build/bin/scx_fcp_behavioral}
-FCP_BIN=${FCP_BIN:-$ARTIFACT/build/bin/scx_fcp}
-LAVD_BIN=$ARTIFACT/build/bin/scx_lavd
-P2DQ_BIN=$ARTIFACT/build/bin/scx_p2dq
+BINDIR=${BINDIR:-${BIN_DIR:-$ARTIFACT/build/bin}}
+OLD=${OLD:-$BINDIR/scx_fcp_behavioral}
+FCP_BIN=${FCP_BIN:-$BINDIR/scx_fcp}
+LAVD_BIN=${LAVD_BIN:-$BINDIR/scx_lavd}
+P2DQ_BIN=${P2DQ_BIN:-$BINDIR/scx_p2dq}
 EXPECTED_OLD_SHA=""
 EXPECTED_FCP_SHA=""
 EXPECTED_LAVD_SHA=""
 EXPECTED_P2DQ_SHA=""
 BENCH_CFG=$PAPER/scripts/internal/jankbench_benchmarks.json
-UI_APK=$ARTIFACT/workloads/UiBench-app-debug.apk
-UI_TEST_APK=$ARTIFACT/workloads/UiBenchJankTests-debug.apk
+WORKLOADS_DIR=${WORKLOADS_DIR:-$ARTIFACT/workloads}
+UI_APK=$WORKLOADS_DIR/UiBench-app-debug.apk
+UI_TEST_APK=$WORKLOADS_DIR/UiBenchJankTests-debug.apk
 
 SKIP_JANK=0
 SKIP_UI=0
@@ -145,8 +148,11 @@ freeze() {
   for req_bin in "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN"; do
     [ -f "$req_bin" ] || die "missing built scheduler binary $req_bin; run './artifact/pipeline.sh build' first (see artifact/BUILD.md §2)"
   done
-  for req_apk in "$ARTIFACT/workloads/JankBench-platform-signed.apk" "$UI_APK" "$UI_TEST_APK"; do
-    [ -f "$req_apk" ] || die "missing workload APK $req_apk; build or place the APKs in artifact/workloads/ first (see artifact/BUILD.md §3–§4)"
+  local req_apks=()
+  [ "$SKIP_JANK" = 0 ] && req_apks+=("$WORKLOADS_DIR/JankBench-platform-signed.apk")
+  [ "$SKIP_UI" = 0 ] && req_apks+=("$UI_APK" "$UI_TEST_APK")
+  for req_apk in "${req_apks[@]}"; do
+    [ -f "$req_apk" ] || die "missing workload APK $req_apk; build or place the APKs in $WORKLOADS_DIR first (see artifact/BUILD.md §3–§4)"
   done
   EXPECTED_OLD_SHA=$(sha256sum "$OLD" | awk '{print $1}')
   EXPECTED_FCP_SHA=$(sha256sum "$FCP_BIN" | awk '{print $1}')
@@ -154,7 +160,7 @@ freeze() {
   EXPECTED_P2DQ_SHA=$(sha256sum "$P2DQ_BIN" | awk '{print $1}')
   local sha=$EXPECTED_OLD_SHA
   sha256sum "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" > "$OUT/scheduler.sha256"
-  sha256sum "$ARTIFACT/workloads/JankBench-platform-signed.apk" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
+  sha256sum "$WORKLOADS_DIR/JankBench-platform-signed.apk" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
   printf '%s\n' "$POLICIES" > "$OUT/policies.txt"
   python3 - "$OUT/FREEZE.json" "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" \
     "$EXPECTED_OLD_SHA" "$EXPECTED_FCP_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
@@ -179,12 +185,14 @@ report = {
         "scx_fcp": shas[1],
         "scx_lavd": shas[2],
         "scx_p2dq_pelt_off": shas[3],
+        "eevdf_proxy_exec": "none",
     },
     "scheduler_binaries": {
         "scx_fcp_v_a_depth3_tgid1ms": {"path": paths[0], "sha256": shas[0]},
         "scx_fcp": {"path": paths[1], "sha256": shas[1]},
         "scx_lavd": {"path": paths[2], "sha256": shas[2]},
         "scx_p2dq": {"path": paths[3], "sha256": shas[3]},
+        "eevdf_proxy_exec": {"path": "none", "sha256": "none"},
     },
     "uibench_app_apk": {"path": paths[4], "sha256": app},
     "uibench_test_apk": {"path": paths[5], "sha256": sha(paths[5])},
@@ -307,7 +315,7 @@ run_jank_test() {
   fi
   reboot_clean
   log "JankBench id=$bid slug=$slug runs=$RUNS run_count=$RUN_COUNT warmup=$WARMUP_ITERATIONS"
-  RUNS=$RUNS RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
+  RUNS=$RUNS RUN_COUNT=$RUN_COUNT JANK_RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
     BENCH_ID=$bid RESULTS_ROOT="$root" DRIVER_LOG="$root/driver.log" \
     VALIDATE_ATTEMPTS=$JANK_ATTEMPTS SKIP_VALID=0 \
     bash "$PAPER/scripts/internal/run_stage3_jankbench.sh" noreboot "$POLICIES" >>"$LOG" 2>&1
@@ -320,7 +328,7 @@ run_jank_test() {
   if ! jank_summary "$root" "$bid" >/dev/null 2>&1; then
     log "repair pass for $slug"
     reboot_clean
-    RUNS=$RUNS RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
+    RUNS=$RUNS RUN_COUNT=$RUN_COUNT JANK_RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
       BENCH_ID=$bid RESULTS_ROOT="$root" DRIVER_LOG="$root/driver.log" \
       VALIDATE_ATTEMPTS=$JANK_ATTEMPTS SKIP_VALID=1 \
       bash "$PAPER/scripts/internal/run_stage3_jankbench.sh" noreboot "$POLICIES" >>"$LOG" 2>&1 || true
@@ -335,6 +343,7 @@ run_uibench() {
   local rc
   log "UiBench tests=$UI_TESTS reps=$RUNS"
   SERIAL=$SERIAL ADB=$ADB VALIDATE_ATTEMPTS=$UI_ATTEMPTS \
+    WORKLOADS_DIR=$WORKLOADS_DIR BIN_DIR=$BINDIR \
     ALLOW_INVALID_TESTS=$UI_ALLOW_INVALID \
     bash "$PAPER/scripts/internal/run_uibench_matrix.sh" \
       --out "$OUT/uibench" --rounds 1 --reps "$RUNS" \
@@ -365,19 +374,37 @@ sh_ 'chmod 755 /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth
 sh_ 'sha256sum /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' > "$OUT/device_bins.sha256"
 
 ensure_guest_proxy_exec() {
-  local want=$1 cur
+  local want=$1 cur feature relaunched=0
   if sh_ 'grep -q "sched_proxy_exec=0" /proc/cmdline'; then
     cur=0
   else
     cur=1
+  fi
+  feature=$(sh_ 'if [ -r /proc/config.gz ]; then zcat /proc/config.gz 2>/dev/null | grep -q "^CONFIG_SCHED_PROXY_EXEC=y" && echo y || echo n; elif [ -r /boot/config-$(uname -r) ]; then grep -q "^CONFIG_SCHED_PROXY_EXEC=y" "/boot/config-$(uname -r)" && echo y || echo n; else echo unknown; fi' || echo unknown)
+  if [ "$want" = 1 ]; then
+    case "$feature" in
+      n) die "guest kernel does not enable CONFIG_SCHED_PROXY_EXEC; cannot run eevdf_proxy_exec" ;;
+      unknown) log "WARNING proxy-exec feature not exposed in guest config; relying on cmdline" ;;
+    esac
   fi
   if [ "$cur" != "$want" ]; then
     log "switching guest kernel cmdline to sched_proxy_exec=$want via launch_cuttlefish.sh"
     if [ -n "${CF_HOME:-}" ] && [ -x "$ARTIFACT/scripts/launch_cuttlefish.sh" ]; then
       PROXY_EXEC=$want SERIAL=$SERIAL ADB=$ADB "$ARTIFACT/scripts/launch_cuttlefish.sh" >>"$LOG" 2>&1 || \
         die "failed to relaunch Cuttlefish with PROXY_EXEC=$want"
+      relaunched=1
     else
       die "guest has sched_proxy_exec=$cur but policy requires sched_proxy_exec=$want (set CF_HOME so run_full_matrix_14.sh can relaunch Cuttlefish automatically)"
+    fi
+  fi
+  if ! sh_ "grep -q 'sched_proxy_exec=$want' /proc/cmdline"; then
+    die "guest cmdline does not contain sched_proxy_exec=$want"
+  fi
+  if [ "$relaunched" = 1 ]; then
+    local got_nproc
+    got_nproc=$(sh_ 'nproc')
+    if [ -n "$got_nproc" ] && [ "$got_nproc" != "$CPUS" ]; then
+      die "guest nproc=$got_nproc after relaunch, expected CPUS=$CPUS"
     fi
   fi
 }
@@ -415,7 +442,31 @@ if [ -n "$HAS_PROXY_POLICY" ]; then
 fi
 POLICIES=$ALL_POLICIES
 
+# The proxy phase validates only its own policy. Revalidate both workloads
+# against the full policy set so the earlier non-proxy records are preserved.
+if [ "$SKIP_JANK" = 0 ]; then
+  IFS=',' read -r -a JANK_ARR <<< "$JANK_TESTS"
+  for bid in "${JANK_ARR[@]}"; do
+    slug=$(bench_slug "$bid")
+    python3 "$PAPER/scripts/internal/validate_jankbench.py" "$OUT/jankbench/$slug" \
+      --expected-runs "$RUNS" --run-count "$RUN_COUNT" --benchmark-id "$bid" \
+      --policies "$ALL_POLICIES" >>"$LOG" 2>&1 || \
+      log "final JankBench validation failed for $slug"
+  done
+fi
+if [ "$SKIP_UI" = 0 ]; then
+  python3 "$PAPER/scripts/internal/validate_uibench.py" "$OUT/uibench" \
+    --policies "$ALL_POLICIES" --tests "$UI_TESTS" --reps "$RUNS" \
+    >>"$LOG" 2>&1 || log "final UiBench validation failed"
+fi
+
 python3 "$PAPER/scripts/internal/aggregate_full_matrix.py" "$OUT" \
   --policies "$POLICIES" --runs "$RUNS" | tee "$OUT/final_summary.txt"
-touch "$OUT/FULL_MATRIX_DONE"
-log "full matrix done out=$OUT"
+agg_rc=${PIPESTATUS[0]}
+if [ "$agg_rc" = 0 ]; then
+  touch "$OUT/FULL_MATRIX_DONE"
+  log "full matrix done out=$OUT"
+else
+  log "full matrix incomplete: aggregate rc=$agg_rc"
+  exit 1
+fi

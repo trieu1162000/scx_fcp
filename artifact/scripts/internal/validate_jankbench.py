@@ -42,23 +42,28 @@ from collections import Counter, OrderedDict, defaultdict
 SCHEMA = "scx_fcp.jankbench_validity.v1"
 
 # ---------------------------------------------------------------------------
-# Frozen expectations.  These are copied from plan/47 and from the manifests
-# of the 10valid matrix.  They are deliberately explicit so a future matrix
-# with a different freeze fails loudly instead of being pooled silently.
+# Frozen expectations. These are deliberately explicit for the released
+# artifact, but platform values may be supplied by config.env for a source
+# build or an alternate image.
+
+def _env_int(name):
+    value = os.environ.get(name, "").strip()
+    return int(value) if value.isdigit() else None
+
 
 EXPECTED = {
     "benchmark_id": 0,
-    "run_count": 3,
+    "run_count": 4,
     "finish_when_done": True,
-    "kernel": "6.12.74-android16-6-g3ec022196c4e-ab15076761",
-    "nproc": 32,
-    "sdk": 37,
-    "build": "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
-    "selinux": "Permissive",
-    "app_sha256": None,
+    "kernel": os.environ.get("EXPECTED_KERNEL", "").strip(),
+    "nproc": _env_int("EXPECTED_NPROC"),
+    "sdk": _env_int("EXPECTED_SDK"),
+    "build": os.environ.get("EXPECTED_BUILD", "").strip(),
+    "selinux": os.environ.get("EXPECTED_SELINUX", "Permissive").strip(),
+    "app_sha256": os.environ.get("EXPECTED_APP_SHA256", "").strip(),
     "min_total_frames": 4000,
     "min_iteration_frames": 1200,
-    "iterations": [0, 1, 2],
+    "iterations": [0, 1, 2, 3],
     "host_window_s": [90.0, 180.0],
     "host_load_start_max": 3.0,
     "guest_load_start_max": 2.0,
@@ -574,24 +579,41 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
 
     # ---- J4: platform and image -------------------------------------------
     j4_problems = []
-    if manifest.get("kernel") != expected["kernel"]:
-        j4_problems.append(
-            f"kernel {manifest.get('kernel')!r} != {expected['kernel']!r}")
-    if manifest.get("nproc") != expected["nproc"]:
-        j4_problems.append(
-            f"nproc {manifest.get('nproc')!r} != {expected['nproc']}")
-    if manifest.get("sdk") != expected["sdk"]:
-        j4_problems.append(f"sdk {manifest.get('sdk')!r} != {expected['sdk']}")
-    if manifest.get("build") != expected["build"]:
-        j4_problems.append(
-            f"build {manifest.get('build')!r} != frozen build")
-    if manifest.get("selinux") != expected["selinux"]:
-        j4_problems.append(
-            f"selinux {manifest.get('selinux')!r} != "
-            f"{expected['selinux']!r}")
-    status_check(checks, "J4_platform", not j4_problems,
-                 "kernel, vCPU, SDK, build, SELinux match" if not j4_problems
-                 else "; ".join(j4_problems))
+    j4_checked = 0
+    if expected["kernel"]:
+        j4_checked += 1
+        if manifest.get("kernel") != expected["kernel"]:
+            j4_problems.append(
+                f"kernel {manifest.get('kernel')!r} != {expected['kernel']!r}")
+    if expected["nproc"] is not None:
+        j4_checked += 1
+        if manifest.get("nproc") != expected["nproc"]:
+            j4_problems.append(
+                f"nproc {manifest.get('nproc')!r} != {expected['nproc']}")
+    if expected["sdk"] is not None:
+        j4_checked += 1
+        if manifest.get("sdk") != expected["sdk"]:
+            j4_problems.append(
+                f"sdk {manifest.get('sdk')!r} != {expected['sdk']}")
+    if expected["build"]:
+        j4_checked += 1
+        if manifest.get("build") != expected["build"]:
+            j4_problems.append(
+                f"build {manifest.get('build')!r} != frozen build")
+    if expected["selinux"]:
+        j4_checked += 1
+        if manifest.get("selinux") != expected["selinux"]:
+            j4_problems.append(
+                f"selinux {manifest.get('selinux')!r} != "
+                f"{expected['selinux']!r}")
+    if j4_checked == 0:
+        status_skip(checks, "J4_platform",
+                    "no EXPECTED_* platform reference configured; "
+                    "live metadata recorded only")
+    else:
+        status_check(checks, "J4_platform", not j4_problems,
+                     "configured platform metadata matches"
+                     if not j4_problems else "; ".join(j4_problems))
     record["reasons"].extend(f"J4_platform: {p}" for p in j4_problems)
 
     # ---- J5: provenance, hashes, scheduler state/ops ----------------------
@@ -1344,8 +1366,11 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
             freeze_manifest = read_json(freeze_path)
             if isinstance(freeze_manifest, dict):
                 for _k in ("kernel", "nproc", "sdk", "build", "selinux", "app_sha256"):
-                    if freeze_manifest.get(_k) is not None:
-                        expected[_k] = freeze_manifest[_k]
+                    live = freeze_manifest.get(_k)
+                    if live is None:
+                        continue
+                    if expected.get(_k) in (None, ""):
+                        expected[_k] = live
         except (OSError, json.JSONDecodeError):
             freeze_manifest = None
 

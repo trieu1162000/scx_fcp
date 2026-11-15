@@ -11,15 +11,15 @@ set -uo pipefail
 
 POLICY=${1:?usage: run_jankbench_pilot.sh <policy> <run-number>}
 RUN=${2:?usage: run_jankbench_pilot.sh <policy> <run-number>}
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$ROOT/config.env" ] && . "$ROOT/config.env"
 REBOOT=${REBOOT:-1}
 BPF_STATS=${BPF_STATS:-0}
 RUN_COUNT=${RUN_COUNT:-3}
 WARMUP_ITERATIONS=${WARMUP_ITERATIONS:-0}
-SERIAL=${SERIAL:-0.0.0.0:6520}
+SERIAL=${SERIAL:-127.0.0.1:6520}
 ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
-ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-[ -f "$ROOT/config.env" ] && . "$ROOT/config.env"
 RESULTS_ROOT=${RESULTS_ROOT:-$ROOT/results/jankbench}
 OUT="$RESULTS_ROOT/$POLICY/run-$RUN"
 # Android SQLiteOpenHelper creates the file without an extension.

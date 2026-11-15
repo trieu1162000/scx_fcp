@@ -18,7 +18,7 @@ Commands:
   smoke                 one JankBench id, no UiBench
   full                  full 14-test matrix (default RUNS=10)
   resume --out DIR      resume an existing campaign
-  analyze --out DIR     integrate/validate a campaign
+  analyze DIR           integrate/validate a campaign (optional --out-dir DIR)
   help                  this message
 
 Environment:
@@ -43,6 +43,7 @@ case "$cmd" in
     ;;
   smoke)
     OUT=${OUT:-"$ARTIFACT/results/smoke"}
+    export OUT
     exec "$INTERNAL/run_full_matrix_14.sh" --out "$OUT" --runs 1 --jank-tests 0 --skip-uibench "$@"
     ;;
   full)

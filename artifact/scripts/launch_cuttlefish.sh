@@ -11,7 +11,7 @@
 #   INITRAMFS      optional override initramfs path
 #   CPUS           4, 8, 16, or 32 (default 16)
 #   MEMORY_MB      guest RAM in MiB (default: 4096/6144/6144/8192 by CPUS)
-#   SERIAL         adb serial (default 0.0.0.0:6520)
+#   SERIAL         adb serial (default 127.0.0.1:6520)
 #   PROXY_EXEC     kernel cmdline sched_proxy_exec=0|1 (default 0; set 1 for EEVDF w/ ProxyExec)
 #   TOPO           host vCPU capacity shaping: asym (default) or sym
 #   STOP_EXISTING  stop any existing cvd instance (default 1)
@@ -36,14 +36,22 @@ case "$CPUS" in
   *) echo "CPUS must be 4, 8, 16, or 32 (got $CPUS)" >&2; exit 2 ;;
 esac
 MEMORY_MB=${MEMORY_MB:-$DEFAULT_MEMORY}
-SERIAL=${SERIAL:-0.0.0.0:6520}
+SERIAL=${SERIAL:-127.0.0.1:6520}
 PROXY_EXEC=${PROXY_EXEC:-0}
 STOP_EXISTING=${STOP_EXISTING:-1}
 STAGE_DEVICE=${STAGE_DEVICE:-1}
-ADB=${ADB:-"$CF_HOME/bin/adb"}
-if [ ! -x "$ADB" ]; then
-  ADB=$(command -v adb)
+ADB=${ADB:-}
+if [ -z "$ADB" ] || [ ! -x "$ADB" ]; then
+  if [ -x "$CF_HOME/bin/adb" ]; then
+    ADB="$CF_HOME/bin/adb"
+  else
+    ADB=$(command -v adb || true)
+  fi
 fi
+[ -n "$ADB" ] || {
+  echo "error: adb not found; install adb or set ADB in artifact/config.env" >&2
+  exit 1
+}
 BIN_DIR=${BIN_DIR:-"$ARTIFACT_DIR/build/bin"}
 if [ ! -d "$BIN_DIR" ] && [ -d "$REPO_ROOT/build/bin" ]; then
   BIN_DIR="$REPO_ROOT/build/bin"
@@ -63,19 +71,17 @@ sh_() {
   "$ADB" -s "$SERIAL" shell "$@" 2>/dev/null | tr -d '\r'
 }
 
-if [ "$STOP_EXISTING" = 1 ]; then
-  HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd" >/dev/null 2>&1 || true
-  pkill -f run_cvd 2>/dev/null || true
-  pkill -f crosvm 2>/dev/null || true
-  sleep 2
-fi
-
 for dev in /dev/kvm /dev/vhost-vsock /dev/vhost-net /dev/net/tun; do
   if [ ! -e "$dev" ] || ! (exec 3<>"$dev") 2>/dev/null; then
     echo "error: host virtualization device $dev is missing or inaccessible (ensure KVM, vhost_vsock, and cuttlefish-base are active on the host)" >&2
     exit 1
   fi
 done
+
+if [ "$STOP_EXISTING" = 1 ]; then
+  HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd" >/dev/null 2>&1 || true
+  sleep 2
+fi
 
 cd "$CF_HOME"
 HOME="$CF_HOME" \

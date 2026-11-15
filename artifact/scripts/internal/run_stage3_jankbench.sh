@@ -7,7 +7,7 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 [ -f "$ROOT/config.env" ] && . "$ROOT/config.env"
-SERIAL=${SERIAL:-0.0.0.0:6520}
+SERIAL=${SERIAL:-127.0.0.1:6520}
 ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 MODE=${1:?usage: run_stage3_jankbench.sh <reboot|noreboot> <policies>}
@@ -15,7 +15,7 @@ IFS=',' read -r -a POLICY_ARR <<< "${2:?policies}"
 RUNS=${RUNS:-5}
 VALIDATE=${VALIDATE:-1}
 VALIDATE_ATTEMPTS=${VALIDATE_ATTEMPTS:-5}
-JANK_RUN_COUNT=${JANK_RUN_COUNT:-4}
+JANK_RUN_COUNT=${JANK_RUN_COUNT:-${RUN_COUNT:-4}}
 BENCH_ID=${BENCH_ID:-0}
 POLICIES_CSV=$(IFS=,; echo "${POLICY_ARR[*]}")
 RESULTS_ROOT=${RESULTS_ROOT:-$ROOT/results/variant_final/jankbench}

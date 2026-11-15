@@ -24,7 +24,10 @@
 
 set -euo pipefail
 
-SERIAL=${SERIAL:-0.0.0.0:6520}
+PAPER=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$PAPER/config.env" ] && . "$PAPER/config.env"
+
+SERIAL=${SERIAL:-127.0.0.1:6520}
 ADB=${ADB:-adb}
 APP_PKG=com.android.test.uibench
 TEST_PKG=com.android.uibench.janktests
@@ -101,8 +104,9 @@ esac
 # Expected scheduler state and ops for the validity sidecar.  EEVDF means no
 # sched_ext scheduler is attached.  The names match the artifact binaries.
 case "$POLICY" in
-  eevdf|base) EXPECTED_STATE=disabled; EXPECTED_OPS="" ;;
-  scx_fcp_behavioral|scx_fcp|fcp_zh) EXPECTED_STATE=enabled; EXPECTED_OPS=fcp_zh ;;
+  eevdf|base|eevdf_proxy_exec) EXPECTED_STATE=disabled; EXPECTED_OPS="" ;;
+  scx_fcp) EXPECTED_STATE=enabled; EXPECTED_OPS=fcp ;;
+  scx_fcp_behavioral|scx_fcp_zh|fcp_zh) EXPECTED_STATE=enabled; EXPECTED_OPS=fcp_zh ;;
   scx_fcp_v_stable_root|scx_fcp_v_a_depth3_expiry75|scx_fcp_v_a_depth3_tgid1ms) EXPECTED_STATE=enabled; EXPECTED_OPS=fcp_zh ;;
   scx_fcp_named|fcp_nh) EXPECTED_STATE=enabled; EXPECTED_OPS=fcp_nh ;;
   scx_p2dq_pelt_off|scx_p2dq|p2dq) EXPECTED_STATE=enabled; EXPECTED_OPS=p2dq ;;

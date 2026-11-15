@@ -16,12 +16,12 @@
 
 set -euo pipefail
 
-SERIAL=${SERIAL:-0.0.0.0:6520}
-ADB=${ADB:-adb}
-A=("$ADB" -s "$SERIAL")
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAPER=$(cd "$HERE/../.." && pwd)
 [ -f "$PAPER/config.env" ] && . "$PAPER/config.env"
+SERIAL=${SERIAL:-127.0.0.1:6520}
+ADB=${ADB:-adb}
+A=("$ADB" -s "$SERIAL")
 OUT=""
 ROUNDS=2
 REPS=5
@@ -29,7 +29,7 @@ POLICIES="eevdf,scx_fcp_behavioral,scx_p2dq_pelt_off,scx_lavd"
 TESTS="inflating-list,bitmap-upload,shadow-grid-list"
 WARMUP_TEST=inflating-list
 REMOTE=/data/local/tmp/scx
-BINDIR=$PAPER/build/bin
+BINDIR=${BINDIR:-${BIN_DIR:-$PAPER/build/bin}}
 NO_REBOOT=0
 VALIDATE=${VALIDATE:-1}
 VALIDATE_ATTEMPTS=${VALIDATE_ATTEMPTS:-3}
@@ -41,7 +41,9 @@ ALLOW_INVALID_TESTS=${ALLOW_INVALID_TESTS:-}
 # The frozen UiBench app shipped with an NPE in BitmapUploadActivity.  A fixed
 # debug build is available; when it is present and hash-matches, use it for
 # every UiBench block and require bitmap-upload like the other five tests.
-FIXED_UI_APK=${FIXED_UI_APK:-$PAPER/workloads/UiBench-app-debug.apk}
+FIXED_UI_APK=${FIXED_UI_APK:-${WORKLOADS_DIR:-$PAPER/workloads}/UiBench-app-debug.apk}
+UI_TEST_APK=${UI_TEST_APK:-${WORKLOADS_DIR:-$PAPER/workloads}/UiBenchJankTests-debug.apk}
+export UI_TEST_APK
 REQUIRE_FIXED_UI_APK=${REQUIRE_FIXED_UI_APK:-1}
 if [ -f "$FIXED_UI_APK" ]; then
   UI_APP_APK=$FIXED_UI_APK
@@ -509,7 +511,9 @@ sh_ 'setenforce 0' >/dev/null 2>&1 || true
 log "host $(uname -r) nproc=$(nproc) mem=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)MB load=$(cat /proc/loadavg)"
 log "device kernel=$(sh_ 'uname -r' | tr -d '\r') nproc=$(sh_ 'nproc' | tr -d '\r') serial=$SERIAL"
 log "policies=$POLICIES tests=$TESTS rounds=$ROUNDS reps=$REPS no_reboot=$NO_REBOOT out=$OUT"
-log "UiBench app=$UI_APP_APK sha=$(sha256sum "$UI_APP_APK" 2>/dev/null | awk '{print $1}')"
+ui_app_sha=none
+[ -n "${UI_APP_APK:-}" ] && ui_app_sha=$(sha256sum "$UI_APP_APK" | awk '{print $1}')
+log "UiBench app=${UI_APP_APK:-none} sha=$ui_app_sha"
 ui_fixed_smoke
 
 IFS=',' read -r -a POLICY_ARR <<< "$POLICIES"
@@ -519,7 +523,8 @@ for round in $(seq 1 "$ROUNDS"); do
   [ "$round" -le $(( REPS % ROUNDS )) ] && reps=$((reps + 1))
   log "round $round reps=$reps policy order ${ORDER[*]}"
   for policy in "${ORDER[@]}"; do
-    run_block "$policy" "$round" "$reps"
+    run_block "$policy" "$round" "$reps" || \
+      log "GIVEUP UiBench block policy=$policy round=$round; continuing"
   done
 done
 
