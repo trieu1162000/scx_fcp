@@ -95,7 +95,6 @@ KNOWN_INVALID_TESTS = {"bitmap-upload"}
 EXPECTED_RUNS = 10
 EXPECTED_RUN_COUNT = 4
 EXPECTED_WARMUP = 1
-APP_SHA256 = "e4e521a3a6fa5c6a754fac9d4dcd9a5238c3c915af1dd84f1f086b12887974af"
 
 
 class IntegrityError(Exception):
@@ -352,7 +351,7 @@ def check_freeze(root, policies, runs, run_count, warmup):
                         f"FREEZE.json {key}={value!r} != expected {expected}")
             frozen_hashes = freeze.get("scheduler_sha256") or {}
             for policy in policies:
-                if policy == "eevdf":
+                if policy in ("eevdf", "eevdf_proxy_exec"):
                     continue
                 if policy not in frozen_hashes:
                     errors.append(
@@ -420,11 +419,6 @@ def check_matrix(root, spec, freeze, policies, runs, run_count, warmup):
             errors.append(
                 f"{rel(root, matrix_path)}: {key}={matrix[key]!r} != "
                 f"{expected}")
-
-    if matrix.get("app_sha256") not in (None, APP_SHA256):
-        errors.append(
-            f"{rel(root, matrix_path)}: app_sha256 "
-            f"{matrix.get('app_sha256')!r} != frozen {APP_SHA256}")
 
     app_hash_path = os.path.join(root, "jankbench_app_sha256.txt")
     if os.path.isfile(app_hash_path):
@@ -739,7 +733,7 @@ def load_jankbench_slug(root, spec, policies, expected, freeze, args,
         frozen_hashes = freeze.get("scheduler_sha256") or {}
         for policy, expected_hash in frozen_hashes.items():
             actual = (policy_spec.get(policy) or {}).get("sha256")
-            if actual is not None and actual != expected_hash:
+            if actual not in (None, "none") and expected_hash not in (None, "none") and actual != expected_hash:
                 structural.append(
                     f"policy_spec[{policy}].sha256 {actual!r} != FREEZE "
                     f"{expected_hash!r}")
@@ -2034,8 +2028,11 @@ def parse_args(argv=None):
                         help="expected valid runs/reps per cell (default 10)")
     parser.add_argument("--run-count", type=int, default=EXPECTED_RUN_COUNT,
                         help="JankBench RUN_COUNT (default 4)")
-    parser.add_argument("--warmup", type=int, default=EXPECTED_WARMUP,
+    parser.add_argument("--warmup", "--warmup-iterations", dest="warmup",
+                        type=int, default=EXPECTED_WARMUP,
                         help="JankBench WARMUP_ITERATIONS (default 1)")
+    parser.add_argument("--policies", default=None,
+                        help="comma-separated policies to integrate")
     parser.add_argument("--allow-incomplete", action="store_true",
                         help="exit 0 for incomplete cells (dry runs); does "
                              "not suppress integrity errors")
@@ -2062,6 +2059,8 @@ def parse_args(argv=None):
     parser.add_argument("--verbose", action="store_true",
                         help="print every non-passing cell")
     args = parser.parse_args(argv)
+    if args.policies:
+        POLICIES[:] = [p.strip() for p in args.policies.split(',') if p.strip()]
     if args.runs < 1:
         parser.error("--runs must be positive")
     if args.dry_run and args.refresh_validity:

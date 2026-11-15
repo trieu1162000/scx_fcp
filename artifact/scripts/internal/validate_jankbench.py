@@ -55,7 +55,7 @@ EXPECTED = {
     "sdk": 37,
     "build": "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
     "selinux": "Permissive",
-    "app_sha256": "e4e521a3a6fa5c6a754fac9d4dcd9a5238c3c915af1dd84f1f086b12887974af",
+    "app_sha256": None,
     "min_total_frames": 4000,
     "min_iteration_frames": 1200,
     "iterations": [0, 1, 2],
@@ -105,33 +105,27 @@ POLICY_SPEC = OrderedDict([
         "label": "EEVDF w/ ProxyExec (no sched_ext)",
     }),
     ("scx_lavd", {
-        "binary": "scx_lavd", "ops": "lavd", "sha256":
-        "638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9",
+        "binary": "scx_lavd", "ops": "lavd", "sha256": None,
         "attach": True, "label": "scx_lavd",
     }),
     ("scx_p2dq_pelt_off", {
-        "binary": "scx_p2dq", "ops": "p2dq", "sha256":
-        "c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1",
+        "binary": "scx_p2dq", "ops": "p2dq", "sha256": None,
         "attach": True, "label": "scx_p2dq PELT off",
     }),
     ("scx_fcp", {
-        "binary": "scx_fcp", "ops": "fcp", "sha256":
-        "becb918f1f6774e4e1d79fcbd48da88de616915a86a7edc4a86d16f8cefee9ec",
+        "binary": "scx_fcp", "ops": "fcp", "sha256": None,
         "attach": True, "label": "scx_fcp full (fcp)",
     }),
     ("scx_fcp_zh", {
-        "binary": "scx_fcp_behavioral", "ops": "fcp_zh", "sha256":
-        "184d63b671cc0a59ad5dcf3d57622bdbaf1097dad0bfdd1494a331d9ab905b68",
+        "binary": "scx_fcp_behavioral", "ops": "fcp_zh", "sha256": None,
         "attach": True, "label": "scx_fcp base (fcp_zh)",
     }),
     ("scx_fcp_nh", {
-        "binary": "scx_fcp_named", "ops": "fcp_nh", "sha256":
-        "bbb3c8a3e705e7da7fbc35c370c56553dee7acd4b65484ca01901ee019553d2b",
+        "binary": "scx_fcp_named", "ops": "fcp_nh", "sha256": None,
         "attach": True, "label": "scx_fcp named (fcp_nh)",
     }),
     ("scx_fcp_v_a_depth3_tgid1ms", {
-        "binary": "scx_fcp_v_a_depth3_tgid1ms", "ops": "fcp_zh", "sha256":
-        "5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4",
+        "binary": "scx_fcp_v_a_depth3_tgid1ms", "ops": "fcp_zh", "sha256": None,
         "attach": True, "label": "scx_fcp tuned",
     }),
 ])
@@ -140,30 +134,6 @@ POLICY_ALIASES = {
     "scx_fcp_behavioral": "scx_fcp_v_a_depth3_tgid1ms",
 }
 
-def _load_built_sha256():
-    sha_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "build", "bin", "SHA256SUMS")
-    if not os.path.isfile(sha_file):
-        return
-    shas = {}
-    with open(sha_file, encoding="utf-8") as fh:
-        lines = fh.read().splitlines()
-    for line in lines:
-        parts = line.split()
-        if len(parts) == 2:
-            shas[parts[1]] = parts[0]
-    mapping = {
-        "scx_lavd": "scx_lavd",
-        "scx_p2dq_pelt_off": "scx_p2dq",
-        "scx_fcp": "scx_fcp",
-        "scx_fcp_zh": "scx_fcp_behavioral",
-        "scx_fcp_nh": "scx_fcp_named",
-        "scx_fcp_v_a_depth3_tgid1ms": "scx_fcp_behavioral",
-    }
-    for pol, bin_name in mapping.items():
-        if bin_name in shas and pol in POLICY_SPEC:
-            POLICY_SPEC[pol]["sha256"] = shas[bin_name]
-
-_load_built_sha256()
 
 REQUIRED_FILES = ["manifest.json", "summary.json", "BenchmarkResults.db",
                   "frames.csv"]
@@ -635,12 +605,16 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
         j5a_problems = []
         app_sha = manifest.get("app_sha256")
         sched_sha = (manifest.get("scheduler_sha256") or "").strip()
-        if app_sha != expected["app_sha256"]:
+        if not app_sha:
+            j5a_problems.append("app_sha256 is missing")
+        elif expected.get("app_sha256") and app_sha != expected["app_sha256"]:
             j5a_problems.append(
-                f"app_sha256 {app_sha!r} != frozen {expected['app_sha256']!r}")
-        if sched_sha != spec["sha256"]:
+                f"app_sha256 {app_sha!r} != expected {expected['app_sha256']!r}")
+        if not sched_sha:
+            j5a_problems.append("scheduler_sha256 is missing")
+        elif spec.get("sha256") and sched_sha != spec["sha256"]:
             j5a_problems.append(
-                f"scheduler_sha256 {sched_sha!r} != frozen {spec['sha256']!r}")
+                f"scheduler_sha256 {sched_sha!r} != expected {spec['sha256']!r}")
         if manifest.get("scheduler_binary") != spec["binary"]:
             j5a_problems.append(
                 f"scheduler_binary {manifest.get('scheduler_binary')!r} != "

@@ -29,8 +29,7 @@ CSV_FIELDS = [
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root")
-    ap.add_argument("--policies", default="eevdf,scx_fcp_v_a_depth3_tgid1ms,"
-                                         "scx_p2dq_pelt_off,scx_lavd")
+    ap.add_argument("--policies", default=os.environ.get("POLICIES", "eevdf,scx_fcp,scx_fcp_v_a_depth3_tgid1ms,scx_p2dq_pelt_off,scx_lavd,eevdf_proxy_exec"))
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--benchmarks-config", default=DEFAULT_CONFIG)
     args = ap.parse_args(argv)

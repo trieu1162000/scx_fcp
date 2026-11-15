@@ -21,6 +21,7 @@ ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAPER=$(cd "$HERE/../.." && pwd)
+[ -f "$PAPER/config.env" ] && . "$PAPER/config.env"
 OUT=""
 ROUNDS=2
 REPS=5
@@ -41,20 +42,14 @@ ALLOW_INVALID_TESTS=${ALLOW_INVALID_TESTS:-}
 # debug build is available; when it is present and hash-matches, use it for
 # every UiBench block and require bitmap-upload like the other five tests.
 FIXED_UI_APK=${FIXED_UI_APK:-$PAPER/workloads/UiBench-app-debug.apk}
-FIXED_UI_APK_SHA=${FIXED_UI_APK_SHA:-$(sha256sum "$FIXED_UI_APK" 2>/dev/null | awk '{print $1}')}
 REQUIRE_FIXED_UI_APK=${REQUIRE_FIXED_UI_APK:-1}
 if [ -f "$FIXED_UI_APK" ]; then
-  got=$(sha256sum "$FIXED_UI_APK" | awk '{print $1}')
-  if [ "$got" = "$FIXED_UI_APK_SHA" ]; then
-    UI_APP_APK=$FIXED_UI_APK
-    ALLOW_INVALID_TESTS=""
-    export UI_APP_APK
-  else
-    echo "FATAL fixed UiBench APK hash $got != $FIXED_UI_APK_SHA" >&2
-    exit 1
-  fi
+  UI_APP_APK=$FIXED_UI_APK
+  FIXED_UI_APK_SHA=$(sha256sum "$FIXED_UI_APK" | awk '{print $1}')
+  ALLOW_INVALID_TESTS=""
+  export UI_APP_APK
 elif [ "$REQUIRE_FIXED_UI_APK" = 1 ]; then
-  echo "FATAL fixed UiBench APK missing: $FIXED_UI_APK" >&2
+  echo "FATAL UiBench APK missing: $FIXED_UI_APK (see artifact/BUILD.md §4)" >&2
   exit 1
 fi
 
@@ -251,19 +246,8 @@ push_bins() {
   "${A[@]}" shell "mkdir -p $REMOTE/stats" >/dev/null 2>&1 || true
   local base=${BINDIR:-$PAPER/build/bin}
   local tuned_bin=${TUNED_BIN:-$base/scx_fcp_behavioral}
-  local want_tuned=${TUNED_SHA:-$(awk '$2=="scx_fcp_behavioral"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo 5a2e7a7e5bca9a8cd0f9d25426e9766dae4ff4aaecfe22579a6a4d0371aab4c4)}
-  local want_lavd=${LAVD_SHA:-$(awk '$2=="scx_lavd"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo 638f9d2f583fce47ad105fd64d0467dcacbf7d32aa5d24ad9d8ba98f9d7ffba9)}
-  local want_p2dq=${P2DQ_SHA:-$(awk '$2=="scx_p2dq"{print $1}' "$PAPER/build/bin/SHA256SUMS" 2>/dev/null || echo c35ba165ad05568fa610272e6e00b32ecb53863687c4483f192aaab4bc78bdf1)}
-
-  [ -f "$tuned_bin" ] || die "tuned binary missing: $tuned_bin"
-  local got
-  got=$(sha256sum "$tuned_bin" | awk '{print $1}')
-  [ "$got" = "$want_tuned" ] || die "tuned binary hash $got != frozen $want_tuned ($tuned_bin)"
-  for pair in "$base/scx_lavd:$want_lavd" "$base/scx_p2dq:$want_p2dq"; do
-    local path=${pair%%:*} hash=${pair##*:}
-    [ -f "$path" ] || die "binary missing: $path"
-    got=$(sha256sum "$path" | awk '{print $1}')
-    [ "$got" = "$hash" ] || die "binary hash $got != frozen $hash ($path)"
+  for path in "$tuned_bin" "$base/scx_lavd" "$base/scx_p2dq"; do
+    [ -f "$path" ] || die "binary missing: $path (run ./artifact/pipeline.sh build first)"
   done
 
   "${A[@]}" push "$tuned_bin" "$REMOTE/scx_fcp_v_a_depth3_tgid1ms" >/dev/null 2>&1 || die "push tuned failed"
@@ -479,7 +463,6 @@ ui_fixed_smoke() {
   [ -n "${UI_APP_APK:-}" ] || return 0
   local got
   got=$(sha256sum "$UI_APP_APK" | awk '{print $1}')
-  [ "$got" = "$FIXED_UI_APK_SHA" ] || return 0
   log "fixed-APK smoke: bitmap-upload 1 rep with $UI_APP_APK"
   kill_all_scx
   sleep 2

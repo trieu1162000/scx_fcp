@@ -73,9 +73,12 @@ def main(argv=None):
                 "invalid_reason": row.get("invalid_reason") or "",
                 "wall_time_s": row.get("wall_time_s"),
                 "frames": row.get("frames"),
+                "mean_ms": row.get("mean_ms"),
                 "p50_ms": row.get("p50_ms"),
                 "p90_ms": row.get("p90_ms"),
                 "p95_ms": row.get("p95_ms"),
+                "p99_ms": row.get("p99_ms"),
+                "jank_frames": row.get("jank_frames"),
                 "jank_pct": row.get("jank_pct"),
                 "metrics_path": os.path.relpath(path, root),
             })

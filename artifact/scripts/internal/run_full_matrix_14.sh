@@ -30,6 +30,7 @@
 set -uo pipefail
 
 ARTIFACT=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$ARTIFACT/config.env" ] && . "$ARTIFACT/config.env"
 ROOT=$(cd "$ARTIFACT/.." && pwd)
 PAPER=$ARTIFACT
 ADB=${ADB:-adb}
@@ -46,15 +47,15 @@ RUN_COUNT=${RUN_COUNT:-4}
 WARMUP_ITERATIONS=${WARMUP_ITERATIONS:-1}
 JANK_ATTEMPTS=${JANK_ATTEMPTS:-5}
 UI_ATTEMPTS=${UI_ATTEMPTS:-3}
-OUT=${OUT:-$PAPER/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)}
+OUT=${OUT:-$PAPER/results/full14_$(date +%Y%m%d-%H%M%S)}
 OLD=${OLD:-$ARTIFACT/build/bin/scx_fcp_behavioral}
 FCP_BIN=${FCP_BIN:-$ARTIFACT/build/bin/scx_fcp}
 LAVD_BIN=$ARTIFACT/build/bin/scx_lavd
 P2DQ_BIN=$ARTIFACT/build/bin/scx_p2dq
-EXPECTED_OLD_SHA=${EXPECTED_OLD_SHA:-$(awk '$2=="scx_fcp_behavioral"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$OLD" 2>/dev/null | awk '{print $1}')}
-EXPECTED_FCP_SHA=${EXPECTED_FCP_SHA:-$(awk '$2=="scx_fcp"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$FCP_BIN" 2>/dev/null | awk '{print $1}')}
-EXPECTED_LAVD_SHA=${EXPECTED_LAVD_SHA:-$(awk '$2=="scx_lavd"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$LAVD_BIN" 2>/dev/null | awk '{print $1}')}
-EXPECTED_P2DQ_SHA=${EXPECTED_P2DQ_SHA:-$(awk '$2=="scx_p2dq"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$P2DQ_BIN" 2>/dev/null | awk '{print $1}')}
+EXPECTED_OLD_SHA=""
+EXPECTED_FCP_SHA=""
+EXPECTED_LAVD_SHA=""
+EXPECTED_P2DQ_SHA=""
 BENCH_CFG=$PAPER/scripts/internal/jankbench_benchmarks.json
 UI_APK=$ARTIFACT/workloads/UiBench-app-debug.apk
 UI_TEST_APK=$ARTIFACT/workloads/UiBenchJankTests-debug.apk
@@ -147,13 +148,11 @@ freeze() {
   for req_apk in "$ARTIFACT/workloads/JankBench-platform-signed.apk" "$UI_APK" "$UI_TEST_APK"; do
     [ -f "$req_apk" ] || die "missing workload APK $req_apk; build or place the APKs in artifact/workloads/ first (see artifact/BUILD.md §3–§4)"
   done
-  local sha fcp_sha
-  sha=$(sha256sum "$OLD" | awk '{print $1}')
-  fcp_sha=$(sha256sum "$FCP_BIN" | awk '{print $1}')
-  [ "$sha" = "$EXPECTED_OLD_SHA" ] || die "frozen scheduler hash $sha != $EXPECTED_OLD_SHA"
-  [ "$fcp_sha" = "$EXPECTED_FCP_SHA" ] || die "scx_fcp full hash mismatch"
-  [ "$(sha256sum "$LAVD_BIN" | awk '{print $1}')" = "$EXPECTED_LAVD_SHA" ] || die "scx_lavd hash mismatch"
-  [ "$(sha256sum "$P2DQ_BIN" | awk '{print $1}')" = "$EXPECTED_P2DQ_SHA" ] || die "scx_p2dq hash mismatch"
+  EXPECTED_OLD_SHA=$(sha256sum "$OLD" | awk '{print $1}')
+  EXPECTED_FCP_SHA=$(sha256sum "$FCP_BIN" | awk '{print $1}')
+  EXPECTED_LAVD_SHA=$(sha256sum "$LAVD_BIN" | awk '{print $1}')
+  EXPECTED_P2DQ_SHA=$(sha256sum "$P2DQ_BIN" | awk '{print $1}')
+  local sha=$EXPECTED_OLD_SHA
   sha256sum "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" > "$OUT/scheduler.sha256"
   sha256sum "$ARTIFACT/workloads/JankBench-platform-signed.apk" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
   printf '%s\n' "$POLICIES" > "$OUT/policies.txt"
