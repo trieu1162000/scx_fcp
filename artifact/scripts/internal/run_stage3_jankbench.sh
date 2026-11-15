@@ -55,7 +55,7 @@ archive_failed() {
 validate_run() {
   local policy=$1 run=$2
   [ "$VALIDATE" = 1 ] || return 0
-  python3 "$ROOT/scripts/validate_jankbench.py" "$RESULTS_ROOT" \
+  python3 "$ROOT/scripts/internal/validate_jankbench.py" "$RESULTS_ROOT" \
     --expected-runs "$RUNS" --run-count "$JANK_RUN_COUNT" \
     --benchmark-id "$BENCH_ID" --policies "$POLICIES_CSV" --quiet \
     >/dev/null 2>&1 || true
@@ -163,7 +163,7 @@ else
 fi
 log "stage3 jankbench complete"
 if [ "$VALIDATE" = 1 ]; then
-  python3 "$ROOT/scripts/validate_jankbench.py" "$RESULTS_ROOT" \
+  python3 "$ROOT/scripts/internal/validate_jankbench.py" "$RESULTS_ROOT" \
     --expected-runs "$RUNS" --run-count "$JANK_RUN_COUNT" \
     --benchmark-id "$BENCH_ID" --policies "$POLICIES_CSV" >>"$LOG" 2>&1 || true
   python3 - "$RESULTS_ROOT/validity.json" "$RUNS" >"$RESULTS_ROOT/driver_cell_summary.txt" <<'PY'

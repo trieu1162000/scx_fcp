@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Full 14-test evaluation with per-measurement validity and automatic reruns.
 #
-#   JankBench: 8 benchmark ids x 4 policies x 10 valid runs (RUN_COUNT=4,
-#              WARMUP_ITERATIONS=1, so three measured iterations per run).
-#   UiBench:   6 tests x 4 policies x 10 valid reps.
+#   JankBench: 8 benchmark ids x selected policies x 10 valid runs
+#              (RUN_COUNT=4, WARMUP_ITERATIONS=1, so three measured
+#              iterations per run).
+#   UiBench:   6 tests x selected policies x 10 valid reps.
 #
 # A JankBench run that fails validation is moved to _invalid/ and rerun with
 # the same run index (at most VALIDATE_ATTEMPTS=5).  A UiBench block that has
@@ -33,7 +34,7 @@ ROOT=$(cd "$ARTIFACT/.." && pwd)
 PAPER=$ARTIFACT
 ADB=${ADB:-adb}
 SERIAL=${SERIAL:-0.0.0.0:6520}
-POLICIES=${POLICIES:-eevdf,scx_fcp_v_a_depth3_tgid1ms,scx_p2dq_pelt_off,scx_lavd}
+POLICIES=${POLICIES:-eevdf,scx_fcp,scx_fcp_v_a_depth3_tgid1ms,scx_p2dq_pelt_off,scx_lavd,eevdf_proxy_exec}
 JANK_TESTS=${JANK_TESTS:-0,1,2,3,4,5,6,7}
 UI_TESTS=${UI_TESTS:-bitmap-upload,shadow-grid-list,inflating-list,slow-bind-recycler,trivial-recycler,layout-cache-low}
 # The frozen UiBench app throws an NPE in BitmapUploadActivity before the first
@@ -47,9 +48,11 @@ JANK_ATTEMPTS=${JANK_ATTEMPTS:-5}
 UI_ATTEMPTS=${UI_ATTEMPTS:-3}
 OUT=${OUT:-$PAPER/results/full14_5a2e_$(date +%Y%m%d-%H%M%S)}
 OLD=${OLD:-$ARTIFACT/build/bin/scx_fcp_behavioral}
+FCP_BIN=${FCP_BIN:-$ARTIFACT/build/bin/scx_fcp}
 LAVD_BIN=$ARTIFACT/build/bin/scx_lavd
 P2DQ_BIN=$ARTIFACT/build/bin/scx_p2dq
 EXPECTED_OLD_SHA=${EXPECTED_OLD_SHA:-$(awk '$2=="scx_fcp_behavioral"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$OLD" 2>/dev/null | awk '{print $1}')}
+EXPECTED_FCP_SHA=${EXPECTED_FCP_SHA:-$(awk '$2=="scx_fcp"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$FCP_BIN" 2>/dev/null | awk '{print $1}')}
 EXPECTED_LAVD_SHA=${EXPECTED_LAVD_SHA:-$(awk '$2=="scx_lavd"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$LAVD_BIN" 2>/dev/null | awk '{print $1}')}
 EXPECTED_P2DQ_SHA=${EXPECTED_P2DQ_SHA:-$(awk '$2=="scx_p2dq"{print $1}' "$ARTIFACT/build/bin/SHA256SUMS" 2>/dev/null || sha256sum "$P2DQ_BIN" 2>/dev/null | awk '{print $1}')}
 BENCH_CFG=$PAPER/scripts/internal/jankbench_benchmarks.json
@@ -138,48 +141,58 @@ reboot_clean() {
 }
 
 freeze() {
-  local sha
+  for req_bin in "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN"; do
+    [ -f "$req_bin" ] || die "missing built scheduler binary $req_bin; run './artifact/pipeline.sh build' first (see artifact/BUILD.md §2)"
+  done
+  for req_apk in "$ARTIFACT/workloads/JankBench-platform-signed.apk" "$UI_APK" "$UI_TEST_APK"; do
+    [ -f "$req_apk" ] || die "missing workload APK $req_apk; build or place the APKs in artifact/workloads/ first (see artifact/BUILD.md §3–§4)"
+  done
+  local sha fcp_sha
   sha=$(sha256sum "$OLD" | awk '{print $1}')
+  fcp_sha=$(sha256sum "$FCP_BIN" | awk '{print $1}')
   [ "$sha" = "$EXPECTED_OLD_SHA" ] || die "frozen scheduler hash $sha != $EXPECTED_OLD_SHA"
+  [ "$fcp_sha" = "$EXPECTED_FCP_SHA" ] || die "scx_fcp full hash mismatch"
   [ "$(sha256sum "$LAVD_BIN" | awk '{print $1}')" = "$EXPECTED_LAVD_SHA" ] || die "scx_lavd hash mismatch"
   [ "$(sha256sum "$P2DQ_BIN" | awk '{print $1}')" = "$EXPECTED_P2DQ_SHA" ] || die "scx_p2dq hash mismatch"
-  sha256sum "$OLD" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" > "$OUT/scheduler.sha256"
+  sha256sum "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" > "$OUT/scheduler.sha256"
   sha256sum "$ARTIFACT/workloads/JankBench-platform-signed.apk" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
   printf '%s\n' "$POLICIES" > "$OUT/policies.txt"
-  python3 - "$OUT/FREEZE.json" "$OLD" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" \
-    "$EXPECTED_OLD_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
+  python3 - "$OUT/FREEZE.json" "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" \
+    "$EXPECTED_OLD_SHA" "$EXPECTED_FCP_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
     "$POLICIES" "$RUNS" "$RUN_COUNT" "$WARMUP_ITERATIONS" <<'PY'
 import hashlib, json, os, sys
 out = sys.argv[1]
-paths = sys.argv[2:7]
-shas = sys.argv[7:10]
-policies = sys.argv[10].split(",")
+paths = sys.argv[2:8]
+shas = sys.argv[8:12]
+policies = sys.argv[12].split(",")
 def sha(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
-app = sha(paths[3])  # UiBench app apk
+app = sha(paths[4])  # UiBench app apk
 report = {
     "schema": "scx_fcp.full_matrix_freeze.v1",
     "scheduler_path": paths[0],
     "scheduler_sha256": {
         "scx_fcp_v_a_depth3_tgid1ms": shas[0],
-        "scx_lavd": shas[1],
-        "scx_p2dq_pelt_off": shas[2],
+        "scx_fcp": shas[1],
+        "scx_lavd": shas[2],
+        "scx_p2dq_pelt_off": shas[3],
     },
     "scheduler_binaries": {
         "scx_fcp_v_a_depth3_tgid1ms": {"path": paths[0], "sha256": shas[0]},
-        "scx_lavd": {"path": paths[1], "sha256": shas[1]},
-        "scx_p2dq": {"path": paths[2], "sha256": shas[2]},
+        "scx_fcp": {"path": paths[1], "sha256": shas[1]},
+        "scx_lavd": {"path": paths[2], "sha256": shas[2]},
+        "scx_p2dq": {"path": paths[3], "sha256": shas[3]},
     },
-    "uibench_app_apk": {"path": paths[3], "sha256": app},
-    "uibench_test_apk": {"path": paths[4], "sha256": sha(paths[4])},
+    "uibench_app_apk": {"path": paths[4], "sha256": app},
+    "uibench_test_apk": {"path": paths[5], "sha256": sha(paths[5])},
     "policies": policies,
-    "runs": int(sys.argv[11]),
-    "run_count": int(sys.argv[12]),
-    "warmup_iterations": int(sys.argv[13]),
+    "runs": int(sys.argv[13]),
+    "run_count": int(sys.argv[14]),
+    "warmup_iterations": int(sys.argv[15]),
 }
 json.dump(report, open(out, "w"), indent=2)
 open(out, "a").write("\n")
@@ -196,23 +209,26 @@ write_matrix_json() {
   g_build=$(sh_ 'getprop ro.build.description' || echo "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys")
   g_selinux=$(sh_ 'getenforce' || echo "Permissive")
   python3 - "$dir/matrix.json" "$BENCH_CFG" "$bid" "$RUN_COUNT" "$WARMUP_ITERATIONS" \
-    "$POLICIES" "$EXPECTED_OLD_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
+    "${ALL_POLICIES:-$POLICIES}" "$EXPECTED_OLD_SHA" "$EXPECTED_FCP_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
     "$OUT/jankbench_app_sha256.txt" "$RUNS" \
     "$g_kernel" "$g_nproc" "$g_sdk" "$g_build" "$g_selinux" <<'PY'
 import json, sys
 out, cfg_path, bid = sys.argv[1], sys.argv[2], sys.argv[3]
 run_count, warmup = int(sys.argv[4]), int(sys.argv[5])
 policies = sys.argv[6].split(",")
-tuned, lavd, p2dq = sys.argv[7], sys.argv[8], sys.argv[9]
+tuned, fcp, lavd, p2dq = sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10]
 try:
-    app_sha = open(sys.argv[10]).read().strip()
+    app_sha = open(sys.argv[11]).read().strip()
 except OSError:
     app_sha = None
-runs = int(sys.argv[11])
+runs = int(sys.argv[12])
 cfg = json.load(open(cfg_path))
 spec = cfg["benchmarks"][bid]
 sched = {
     "eevdf": "none",
+    "eevdf_proxy_exec": "none",
+    "scx_fcp": fcp,
+    "scx_fcp_behavioral": tuned,
     "scx_fcp_v_a_depth3_tgid1ms": tuned,
     "scx_lavd": lavd,
     "scx_p2dq_pelt_off": p2dq,
@@ -228,11 +244,11 @@ report = {
     "run_count": run_count,
     "warmup_iterations": warmup,
     "runs_expected": runs,
-    "kernel": sys.argv[12] if len(sys.argv) > 12 and sys.argv[12] else "6.12.74-android16",
-    "nproc": int(sys.argv[13]) if len(sys.argv) > 13 and sys.argv[13].isdigit() else 32,
-    "sdk": int(sys.argv[14]) if len(sys.argv) > 14 and sys.argv[14].isdigit() else 37,
-    "build": sys.argv[15] if len(sys.argv) > 15 and sys.argv[15] else "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
-    "selinux": sys.argv[16] if len(sys.argv) > 16 and sys.argv[16] else "Permissive",
+    "kernel": sys.argv[13] if len(sys.argv) > 13 and sys.argv[13] else "6.12.74-android16",
+    "nproc": int(sys.argv[14]) if len(sys.argv) > 14 and sys.argv[14].isdigit() else 32,
+    "sdk": int(sys.argv[15]) if len(sys.argv) > 15 and sys.argv[15].isdigit() else 37,
+    "build": sys.argv[16] if len(sys.argv) > 16 and sys.argv[16] else "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
+    "selinux": sys.argv[17] if len(sys.argv) > 17 and sys.argv[17] else "Permissive",
 }
 json.dump(report, open(out, "w"), indent=2)
 open(out, "a").write("\n")
@@ -343,20 +359,62 @@ sh_ 'setenforce 0' >/dev/null 2>&1 || true
 [ "$(sh_ 'getenforce')" = "Permissive" ] || die "SELinux is not Permissive"
 # Push the frozen scheduler under the variant name once; each run re-asserts it.
 "${A[@]}" push "$OLD" /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms >/dev/null || die "push frozen scheduler"
+"${A[@]}" push "$FCP_BIN" /data/local/tmp/scx/scx_fcp >/dev/null || die "push scx_fcp full scheduler"
 "${A[@]}" push "$LAVD_BIN" /data/local/tmp/scx/scx_lavd >/dev/null || die "push scx_lavd"
 "${A[@]}" push "$P2DQ_BIN" /data/local/tmp/scx/scx_p2dq >/dev/null || die "push scx_p2dq"
-sh_ 'chmod 755 /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' >/dev/null 2>&1 || true
-sh_ 'sha256sum /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' > "$OUT/device_bins.sha256"
+sh_ 'chmod 755 /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' >/dev/null 2>&1 || true
+sh_ 'sha256sum /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' > "$OUT/device_bins.sha256"
 
-if [ "$SKIP_JANK" = 0 ]; then
-  IFS=',' read -r -a JANK_ARR <<< "$JANK_TESTS"
-  for bid in "${JANK_ARR[@]}"; do
-    run_jank_test "$bid"
-  done
+ensure_guest_proxy_exec() {
+  local want=$1 cur
+  if sh_ 'grep -q "sched_proxy_exec=0" /proc/cmdline'; then
+    cur=0
+  else
+    cur=1
+  fi
+  if [ "$cur" != "$want" ]; then
+    log "switching guest kernel cmdline to sched_proxy_exec=$want via launch_cuttlefish.sh"
+    if [ -n "${CF_HOME:-}" ] && [ -x "$ARTIFACT/scripts/launch_cuttlefish.sh" ]; then
+      PROXY_EXEC=$want SERIAL=$SERIAL ADB=$ADB "$ARTIFACT/scripts/launch_cuttlefish.sh" >>"$LOG" 2>&1 || \
+        die "failed to relaunch Cuttlefish with PROXY_EXEC=$want"
+    else
+      die "guest has sched_proxy_exec=$cur but policy requires sched_proxy_exec=$want (set CF_HOME so run_full_matrix_14.sh can relaunch Cuttlefish automatically)"
+    fi
+  fi
+}
+
+ALL_POLICIES=$POLICIES
+NON_PROXY_POLICIES=$(printf '%s' "$ALL_POLICIES" | tr ',' '\n' | grep -v '^eevdf_proxy_exec$' | paste -sd, - || true)
+HAS_PROXY_POLICY=$(printf '%s' "$ALL_POLICIES" | tr ',' '\n' | grep -x 'eevdf_proxy_exec' || true)
+
+if [ -n "$NON_PROXY_POLICIES" ]; then
+  ensure_guest_proxy_exec 0
+  POLICIES=$NON_PROXY_POLICIES
+  if [ "$SKIP_JANK" = 0 ]; then
+    IFS=',' read -r -a JANK_ARR <<< "$JANK_TESTS"
+    for bid in "${JANK_ARR[@]}"; do
+      run_jank_test "$bid"
+    done
+  fi
+  if [ "$SKIP_UI" = 0 ]; then
+    run_uibench
+  fi
 fi
-if [ "$SKIP_UI" = 0 ]; then
-  run_uibench
+
+if [ -n "$HAS_PROXY_POLICY" ]; then
+  ensure_guest_proxy_exec 1
+  POLICIES=eevdf_proxy_exec
+  if [ "$SKIP_JANK" = 0 ]; then
+    IFS=',' read -r -a JANK_ARR <<< "$JANK_TESTS"
+    for bid in "${JANK_ARR[@]}"; do
+      run_jank_test "$bid"
+    done
+  fi
+  if [ "$SKIP_UI" = 0 ]; then
+    run_uibench
+  fi
 fi
+POLICIES=$ALL_POLICIES
 
 python3 "$PAPER/scripts/internal/aggregate_full_matrix.py" "$OUT" \
   --policies "$POLICIES" --runs "$RUNS" | tee "$OUT/final_summary.txt"

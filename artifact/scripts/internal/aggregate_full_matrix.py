@@ -13,8 +13,9 @@ import json
 import os
 import sys
 
-PAPER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_CONFIG = os.path.join(PAPER, "scripts", "jankbench_benchmarks.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAPER = os.path.dirname(os.path.dirname(HERE))
+DEFAULT_CONFIG = os.path.join(HERE, "jankbench_benchmarks.json")
 UI_TESTS = [
     "inflating-list", "shadow-grid-list", "slow-bind-recycler",
     "trivial-recycler", "layout-cache-low", "bitmap-upload",

@@ -12,6 +12,8 @@
 #   CPUS           4, 8, 16, or 32 (default 16)
 #   MEMORY_MB      guest RAM in MiB (default: 4096/6144/6144/8192 by CPUS)
 #   SERIAL         adb serial (default 0.0.0.0:6520)
+#   PROXY_EXEC     kernel cmdline sched_proxy_exec=0|1 (default 0; set 1 for EEVDF w/ ProxyExec)
+#   TOPO           host vCPU capacity shaping: asym (default) or sym
 #   STOP_EXISTING  stop any existing cvd instance (default 1)
 #   STAGE_DEVICE   push built binaries & install APKs if present (default 1)
 #   BIN_DIR        host directory with built scheduler binaries
@@ -34,6 +36,7 @@ case "$CPUS" in
 esac
 MEMORY_MB=${MEMORY_MB:-$DEFAULT_MEMORY}
 SERIAL=${SERIAL:-0.0.0.0:6520}
+PROXY_EXEC=${PROXY_EXEC:-0}
 STOP_EXISTING=${STOP_EXISTING:-1}
 STAGE_DEVICE=${STAGE_DEVICE:-1}
 ADB=${ADB:-"$CF_HOME/bin/adb"}
@@ -80,7 +83,7 @@ ANDROID_PRODUCT_OUT="$CF_HOME" \
 nohup "$CF_HOME/bin/launch_cvd" \
   -system_image_dir="$CF_HOME" \
   "${KERNEL_ARGS[@]}" \
-  -extra_kernel_cmdline "sched_proxy_exec=0" \
+  -extra_kernel_cmdline "sched_proxy_exec=$PROXY_EXEC" \
   -gpu_mode=guest_swiftshader \
   -guest_hwui_renderer=skiagl \
   -guest_enforce_security=false \
@@ -163,6 +166,20 @@ if [ "$STAGE_DEVICE" = 1 ]; then
   fi
 fi
 
+# 5. Apply optional host vCPU capacity shaping (TOPO=asym sets nice +10 on LITTLE half 0..CPUS/2-1)
+TOPO=${TOPO:-asym}
+HALF=$((CPUS / 2))
+for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk '/crosvm_vcpu/ {print $1}'); do
+  renice -n 0 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 0 -p "$tid" >/dev/null 2>&1 || true
+done
+if [ "$TOPO" = "asym" ]; then
+  for v in $(seq 0 $((HALF - 1))); do
+    for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk -v c="crosvm_vcpu$v" '$2 == c {print $1}'); do
+      renice -n 10 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 10 -p "$tid" >/dev/null 2>&1 || true
+    done
+  done
+fi
+
 echo "device ready: $SERIAL"
 echo "  kernel:          $(sh_ 'uname -r') ($(sh_ 'nproc') vCPUs)"
 echo "  activity:        $(sh_ 'service check activity')"
@@ -171,3 +188,4 @@ echo "  systemui:        $(sh_ 'pidof com.android.systemui')"
 echo "  boot_completed:  $(sh_ 'getprop sys.boot_completed')"
 echo "  sched_ext state: $(sh_ 'cat /sys/kernel/sched_ext/state 2>/dev/null')"
 echo "  SELinux:         $(sh_ 'getenforce')"
+echo "  proxy_exec:      sched_proxy_exec=$PROXY_EXEC (topology=$TOPO)"

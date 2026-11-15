@@ -140,6 +140,7 @@ export ADB=${ADB:-adb}
 export OUT=$PWD/artifact/results/full14_$(date +%Y%m%d-%H%M%S)
 export UI_ALLOW_INVALID=none
 
+export CF_HOME=/path/to/cuttlefish
 RUNS=10 RUN_COUNT=4 WARMUP_ITERATIONS=1 \
   ./artifact/pipeline.sh full --out "$OUT"
 ```

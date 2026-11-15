@@ -50,27 +50,36 @@ import tempfile
 import time
 from collections import OrderedDict, defaultdict
 
-PAPER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_BENCHMARKS = os.path.join(PAPER, "scripts", "jankbench_benchmarks.json")
-VALIDATE_JANKBENCH = os.path.join(PAPER, "scripts", "validate_jankbench.py")
-VALIDATE_UIBENCH = os.path.join(PAPER, "scripts", "validate_uibench.py")
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAPER = os.path.dirname(os.path.dirname(HERE))
+DEFAULT_BENCHMARKS = os.path.join(HERE, "jankbench_benchmarks.json")
+VALIDATE_JANKBENCH = os.path.join(HERE, "validate_jankbench.py")
+VALIDATE_UIBENCH = os.path.join(HERE, "validate_uibench.py")
 
 SCHEMA = "scx_fcp.full14_integration.v1"
 POLICIES = [
     "eevdf",
+    "eevdf_proxy_exec",
+    "scx_fcp",
     "scx_fcp_v_a_depth3_tgid1ms",
     "scx_p2dq_pelt_off",
     "scx_lavd",
 ]
 POLICY_LABELS = {
     "eevdf": "EEVDF",
-    "scx_fcp_v_a_depth3_tgid1ms": "scx_fcp (Variant A)",
+    "eevdf_proxy_exec": "EEVDF w/ ProxyExec",
+    "scx_fcp": "scx_fcp (Full)",
+    "scx_fcp_behavioral": "scx_fcp (w/o Hints)",
+    "scx_fcp_v_a_depth3_tgid1ms": "scx_fcp (w/o Hints)",
     "scx_p2dq_pelt_off": "scx_p2dq (PELT off)",
     "scx_lavd": "scx_lavd",
 }
 LATEX_POLICY_LABELS = {
     "eevdf": "EEVDF",
-    "scx_fcp_v_a_depth3_tgid1ms": r"\texttt{scx\_fcp} (Variant A)",
+    "eevdf_proxy_exec": r"\texttt{EEVDF} w/ ProxyExec",
+    "scx_fcp": r"\texttt{scx\_fcp} (Full)",
+    "scx_fcp_behavioral": r"\texttt{scx\_fcp} (w/o Hints)",
+    "scx_fcp_v_a_depth3_tgid1ms": r"\texttt{scx\_fcp} (w/o Hints)",
     "scx_p2dq_pelt_off": r"\texttt{scx\_p2dq} (PELT off)",
     "scx_lavd": r"\texttt{scx\_lavd}",
 }
