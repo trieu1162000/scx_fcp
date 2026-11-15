@@ -159,10 +159,22 @@ freeze() {
   EXPECTED_LAVD_SHA=$(sha256sum "$LAVD_BIN" | awk '{print $1}')
   EXPECTED_P2DQ_SHA=$(sha256sum "$P2DQ_BIN" | awk '{print $1}')
   local sha=$EXPECTED_OLD_SHA
-  sha256sum "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" > "$OUT/scheduler.sha256"
-  sha256sum "$WORKLOADS_DIR/JankBench-platform-signed.apk" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
+  local -a sha_paths=("$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN")
+  local ui_app="" ui_test=""
+  if [ "$SKIP_JANK" = 0 ]; then
+    sha_paths+=("$WORKLOADS_DIR/JankBench-platform-signed.apk")
+    sha256sum "$WORKLOADS_DIR/JankBench-platform-signed.apk" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
+  else
+    : > "$OUT/jankbench_app_sha256.txt"
+  fi
+  if [ "$SKIP_UI" = 0 ]; then
+    sha_paths+=("$UI_APK" "$UI_TEST_APK")
+    ui_app=$UI_APK
+    ui_test=$UI_TEST_APK
+  fi
+  sha256sum "${sha_paths[@]}" > "$OUT/scheduler.sha256"
   printf '%s\n' "$POLICIES" > "$OUT/policies.txt"
-  python3 - "$OUT/FREEZE.json" "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$UI_APK" "$UI_TEST_APK" \
+  python3 - "$OUT/FREEZE.json" "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN" "$ui_app" "$ui_test" \
     "$EXPECTED_OLD_SHA" "$EXPECTED_FCP_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
     "$POLICIES" "$RUNS" "$RUN_COUNT" "$WARMUP_ITERATIONS" <<'PY'
 import hashlib, json, os, sys
@@ -171,6 +183,8 @@ paths = sys.argv[2:8]
 shas = sys.argv[8:12]
 policies = sys.argv[12].split(",")
 def sha(path):
+    if not path:
+        return None
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -194,8 +208,10 @@ report = {
         "scx_p2dq": {"path": paths[3], "sha256": shas[3]},
         "eevdf_proxy_exec": {"path": "none", "sha256": "none"},
     },
-    "uibench_app_apk": {"path": paths[4], "sha256": app},
-    "uibench_test_apk": {"path": paths[5], "sha256": sha(paths[5])},
+    "uibench_app_apk": ({"path": paths[4], "sha256": app}
+                        if paths[4] else None),
+    "uibench_test_apk": ({"path": paths[5], "sha256": sha(paths[5])}
+                         if paths[5] else None),
     "policies": policies,
     "runs": int(sys.argv[13]),
     "run_count": int(sys.argv[14]),
