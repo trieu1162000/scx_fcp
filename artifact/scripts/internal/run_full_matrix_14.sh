@@ -391,12 +391,16 @@ sh_ 'sha256sum /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth
 
 ensure_guest_proxy_exec() {
   local want=$1 cur feature relaunched=0
-  if sh_ 'grep -q "sched_proxy_exec=0" /proc/cmdline'; then
+  feature=$(sh_ 'if [ -r /proc/config.gz ]; then zcat /proc/config.gz 2>/dev/null | grep -q "^CONFIG_SCHED_PROXY_EXEC=y" && echo y || echo n; elif [ -r /boot/config-$(uname -r) ]; then grep -q "^CONFIG_SCHED_PROXY_EXEC=y" "/boot/config-$(uname -r)" && echo y || echo n; else echo unknown; fi' || echo unknown)
+  if [ "$feature" = "n" ]; then
+    # Proxy execution is disabled at compile time. There is no cmdline switch
+    # to wait for, and asking the launcher to add one is pointless.
+    cur=0
+  elif sh_ 'grep -q "sched_proxy_exec=0" /proc/cmdline'; then
     cur=0
   else
     cur=1
   fi
-  feature=$(sh_ 'if [ -r /proc/config.gz ]; then zcat /proc/config.gz 2>/dev/null | grep -q "^CONFIG_SCHED_PROXY_EXEC=y" && echo y || echo n; elif [ -r /boot/config-$(uname -r) ]; then grep -q "^CONFIG_SCHED_PROXY_EXEC=y" "/boot/config-$(uname -r)" && echo y || echo n; else echo unknown; fi' || echo unknown)
   if [ "$want" = 1 ]; then
     case "$feature" in
       n) die "guest kernel does not enable CONFIG_SCHED_PROXY_EXEC; cannot run eevdf_proxy_exec" ;;
@@ -413,7 +417,7 @@ ensure_guest_proxy_exec() {
       die "guest has sched_proxy_exec=$cur but policy requires sched_proxy_exec=$want (set CF_HOME so run_full_matrix_14.sh can relaunch Cuttlefish automatically)"
     fi
   fi
-  if ! sh_ "grep -q 'sched_proxy_exec=$want' /proc/cmdline"; then
+  if [ "$feature" != "n" ] && ! sh_ "grep -q 'sched_proxy_exec=$want' /proc/cmdline"; then
     die "guest cmdline does not contain sched_proxy_exec=$want"
   fi
   if [ "$relaunched" = 1 ]; then
