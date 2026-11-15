@@ -192,8 +192,8 @@ write_matrix_json() {
   local g_kernel g_nproc g_sdk g_build g_selinux
   g_kernel=$(sh_ 'uname -r' || echo "6.12.74-android16")
   g_nproc=$(sh_ 'nproc' || echo "32")
-  g_sdk=$(sh_ 'getprop ro.build.version.sdk' || echo "36")
-  g_build=$(sh_ 'getprop ro.build.description' || echo "aosp_cf_x86_64_phone-userdebug")
+  g_sdk=$(sh_ 'getprop ro.build.version.sdk' || echo "37")
+  g_build=$(sh_ 'getprop ro.build.description' || echo "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys")
   g_selinux=$(sh_ 'getenforce' || echo "Permissive")
   python3 - "$dir/matrix.json" "$BENCH_CFG" "$bid" "$RUN_COUNT" "$WARMUP_ITERATIONS" \
     "$POLICIES" "$EXPECTED_OLD_SHA" "$EXPECTED_LAVD_SHA" "$EXPECTED_P2DQ_SHA" \
@@ -230,8 +230,8 @@ report = {
     "runs_expected": runs,
     "kernel": sys.argv[12] if len(sys.argv) > 12 and sys.argv[12] else "6.12.74-android16",
     "nproc": int(sys.argv[13]) if len(sys.argv) > 13 and sys.argv[13].isdigit() else 32,
-    "sdk": int(sys.argv[14]) if len(sys.argv) > 14 and sys.argv[14].isdigit() else 36,
-    "build": sys.argv[15] if len(sys.argv) > 15 and sys.argv[15] else "aosp_cf_x86_64_phone-userdebug",
+    "sdk": int(sys.argv[14]) if len(sys.argv) > 14 and sys.argv[14].isdigit() else 37,
+    "build": sys.argv[15] if len(sys.argv) > 15 and sys.argv[15] else "aosp_cf_x86_64_only_phone-userdebug 17 CP2A.260605.016 16644040 test-keys",
     "selinux": sys.argv[16] if len(sys.argv) > 16 and sys.argv[16] else "Permissive",
 }
 json.dump(report, open(out, "w"), indent=2)
