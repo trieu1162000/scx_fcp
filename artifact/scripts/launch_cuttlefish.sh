@@ -229,21 +229,40 @@ fi
 TOPO=${TOPO:-asym}
 HALF=$((CPUS / 2))
 
+# crosvm's vCPU threads have comm names such as crosvm_vcpu0, so
+# `ps -C crosvm` does not select them. Identify the Android crosvm instance
+# (the one with --cpus) and address its threads by PID.
+CROSVM_PID=""
+for _pid in $(pgrep -x crosvm 2>/dev/null); do
+  if tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null | grep -q -- '--cpus='; then
+    CROSVM_PID=$_pid
+    break
+  fi
+done
+
+all_vcpu_tids() {
+  [ -n "$CROSVM_PID" ] || return 1
+  /bin/ps -L -p "$CROSVM_PID" -o tid=,comm= 2>/dev/null |
+    awk '/crosvm_vcpu/ {print $1}'
+}
+
 reset_vcpu_sched() {
-  for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk '/crosvm_vcpu/ {print $1}'); do
-    chrt -o -p 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o -p 0 "$tid" >/dev/null 2>&1 || true
+  for tid in $(all_vcpu_tids); do
+    chrt -o --pid 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o --pid 0 "$tid" >/dev/null 2>&1 || true
     renice -n 0 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 0 -p "$tid" >/dev/null 2>&1 || true
   done
 }
 
 vcpu_tid() {
-  /bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk -v c="crosvm_vcpu$1" '$2 == c {print $1}'
+  [ -n "$CROSVM_PID" ] || return 1
+  /bin/ps -L -p "$CROSVM_PID" -o tid=,comm= 2>/dev/null |
+    awk -v c="crosvm_vcpu$1" '$2 == c {print $1}'
 }
 
 set_deadline_vcpu() {
   local tid=$1
-  chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" -p "$tid" >/dev/null 2>&1 || \
-    sudo -n chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" -p "$tid" >/dev/null 2>&1 || {
+  chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" --pid 0 "$tid" >/dev/null 2>&1 || \
+    sudo -n chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" --pid 0 "$tid" >/dev/null 2>&1 || {
       echo "warning: could not set SCHED_DEADLINE on crosvm tid $tid (need CAP_SYS_NICE/root)" >&2
       return 1
     }
@@ -266,7 +285,7 @@ elif [ "$TOPO" = "dl" ]; then
   # big half: prefer these vCPUs with a negative nice value.
   for v in $(seq "$HALF" $((CPUS - 1))); do
     for tid in $(vcpu_tid "$v"); do
-      chrt -o -p 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o -p 0 "$tid" >/dev/null 2>&1 || true
+      chrt -o --pid 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o --pid 0 "$tid" >/dev/null 2>&1 || true
       renice -n -10 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n -10 -p "$tid" >/dev/null 2>&1 || true
     done
   done
