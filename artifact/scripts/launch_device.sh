@@ -93,7 +93,7 @@ if [ -n "$AOSP_OUT" ]; then
   done
 else
   for apk in "${WORKLOAD_APKS[@]}"; do
-    [ -f "$apk" ] || echo "warning: missing workload APK $apk; set AOSP_OUT or copy it into $WORKLOADS_DIR" >&2
+    [ -f "$apk" ] || die "missing workload APK $apk; set AOSP_OUT or copy APKs into $WORKLOADS_DIR"
   done
 fi
 
@@ -118,10 +118,6 @@ install_apk() {
   fi
 }
 for apk in "${WORKLOAD_APKS[@]}"; do
-  if [ ! -f "$apk" ]; then
-    echo "warning: missing workload APK $apk; skipping (the selected workload will fail later if it needs this APK)" >&2
-    continue
-  fi
   install_apk "$apk"
 done
 
