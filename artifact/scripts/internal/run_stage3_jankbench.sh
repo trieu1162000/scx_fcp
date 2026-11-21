@@ -27,20 +27,28 @@ log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
 sh_() { "${A[@]}" shell "$@" 2>/dev/null | tr -d '\r'; }
 
 wait_quiet() {
-  local deadline=$((SECONDS + 900)) hl gl
-  local host_limit=${QUIET_HOST:-3.0}
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    log "skip host/device load wait on ARM64"
+    return 0
+  fi
+  local deadline=$((SECONDS + 900)) hl gl host_nproc
+  local host_limit=${QUIET_HOST:-}
   local guest_limit=${QUIET_GUEST:-2.0}
+  host_nproc=$(nproc)
+  if [ -z "$host_limit" ]; then
+    host_limit=$(awk -v n="$host_nproc" 'BEGIN { printf "%.2f", n * 0.25 }')
+  fi
   while [ $SECONDS -lt $deadline ]; do
     hl=$(awk '{print $1}' /proc/loadavg)
     gl=$(sh_ 'cut -d" " -f1 /proc/loadavg')
     if awk -v h="$hl" -v g="$gl" -v hlim="$host_limit" -v glim="$guest_limit" 'BEGIN{exit !(h<=hlim && g<=glim)}'; then
-      log "quiet host=$hl guest=$gl"
+      log "quiet host=$hl host_limit=$host_limit guest=$gl guest_limit=$guest_limit"
       return 0
     fi
-    log "WAIT load high host=$hl guest=$gl"
+    log "WAIT load high host=$hl host_limit=$host_limit guest=$gl guest_limit=$guest_limit"
     sleep 15
   done
-  log "WARNING load did not settle host=${hl:-?} guest=${gl:-?}"
+  log "WARNING load did not settle host=${hl:-?} host_limit=$host_limit guest=${gl:-?} guest_limit=$guest_limit"
   return 1
 }
 
