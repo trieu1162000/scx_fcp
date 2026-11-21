@@ -13,7 +13,10 @@
 #   MEMORY_MB      guest RAM in MiB (default: 4096/6144/6144/8192 by CPUS)
 #   SERIAL         adb serial (default 127.0.0.1:6520)
 #   PROXY_EXEC     kernel cmdline sched_proxy_exec=0|1 (default 0; set 1 for EEVDF w/ ProxyExec)
-#   TOPO           host vCPU capacity shaping: asym (default) or sym
+#   TOPO           host vCPU capacity shaping:
+#                    asym = nice-based (legacy)
+#                    dl   = SCHED_DEADLINE-based LITTLE bandwidth cap
+#                    sym  = all vCPUs equal
 #   STOP_EXISTING  stop any existing cvd instance (default 1)
 #   STAGE_DEVICE   push built binaries & install APKs if present (default 1)
 #   BIN_DIR        host directory with built scheduler binaries
@@ -27,6 +30,14 @@ REPO_ROOT=$(cd "$ARTIFACT_DIR/.." && pwd)
 
 : "${CF_HOME:?set CF_HOME in artifact/config.env or environment}"
 
+for f in boot.img super.img; do
+  [ -f "$CF_HOME/$f" ] || {
+    echo "error: missing Cuttlefish image $CF_HOME/$f" >&2
+    echo "       place the aosp_cf_x86_64_only_phone image files in CF_HOME" >&2
+    exit 2
+  }
+done
+
 CPUS=${CPUS:-16}
 case "$CPUS" in
   4)  DEFAULT_MEMORY=4096 ;;
@@ -36,6 +47,9 @@ case "$CPUS" in
   *) echo "CPUS must be 4, 8, 16, or 32 (got $CPUS)" >&2; exit 2 ;;
 esac
 MEMORY_MB=${MEMORY_MB:-$DEFAULT_MEMORY}
+DL_RUNTIME_NS=${DL_RUNTIME_NS:-892000}
+DL_PERIOD_NS=${DL_PERIOD_NS:-2000000}
+DL_DEADLINE_NS=${DL_DEADLINE_NS:-$DL_PERIOD_NS}
 SERIAL=${SERIAL:-127.0.0.1:6520}
 PROXY_EXEC=${PROXY_EXEC:-0}
 STOP_EXISTING=${STOP_EXISTING:-1}
@@ -110,6 +124,11 @@ for _ in $(seq 1 120); do
      [ "$("$ADB" -s "$SERIAL" get-state 2>/dev/null | tr -d '\r')" = device ]; then
     break
   fi
+  if grep -q "assemble_cvd failed" "$LOG" 2>/dev/null; then
+    echo "Cuttlefish launch failed; see $LOG" >&2
+    tail -30 "$LOG" >&2 || true
+    exit 1
+  fi
   sleep 2
 done
 [ "$("$ADB" -s "$SERIAL" get-state 2>/dev/null | tr -d '\r')" = device ] || {
@@ -173,16 +192,54 @@ if [ "$STAGE_DEVICE" = 1 ]; then
   fi
 fi
 
-# 5. Apply optional host vCPU capacity shaping (TOPO=asym sets nice +10 on LITTLE half 0..CPUS/2-1)
+# 5. Apply optional host vCPU capacity shaping.
+#    asym = legacy nice+10 on LITTLE half 0..CPUS/2-1.
+#    dl   = SCHED_DEADLINE bandwidth cap on LITTLE half and nice -10 on the
+#           remaining vCPUs. 892us / 2000us = 44.6%, matching the 446/1024
+#           asymmetric capacity ratio. This is a host-side emulation, not a
+#           hardware model; record the chosen mode in every result manifest.
 TOPO=${TOPO:-asym}
 HALF=$((CPUS / 2))
-for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk '/crosvm_vcpu/ {print $1}'); do
-  renice -n 0 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 0 -p "$tid" >/dev/null 2>&1 || true
-done
+
+reset_vcpu_sched() {
+  for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk '/crosvm_vcpu/ {print $1}'); do
+    chrt -o -p 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o -p 0 "$tid" >/dev/null 2>&1 || true
+    renice -n 0 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 0 -p "$tid" >/dev/null 2>&1 || true
+  done
+}
+
+vcpu_tid() {
+  /bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk -v c="crosvm_vcpu$1" '$2 == c {print $1}'
+}
+
+set_deadline_vcpu() {
+  local tid=$1
+  chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" -p "$tid" >/dev/null 2>&1 || \
+    sudo -n chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" -p "$tid" >/dev/null 2>&1 || {
+      echo "warning: could not set SCHED_DEADLINE on crosvm tid $tid (need CAP_SYS_NICE/root)" >&2
+      return 1
+    }
+}
+
+reset_vcpu_sched
 if [ "$TOPO" = "asym" ]; then
   for v in $(seq 0 $((HALF - 1))); do
-    for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk -v c="crosvm_vcpu$v" '$2 == c {print $1}'); do
+    for tid in $(vcpu_tid "$v"); do
       renice -n 10 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 10 -p "$tid" >/dev/null 2>&1 || true
+    done
+  done
+elif [ "$TOPO" = "dl" ]; then
+  # LITTLE half: hard 44.6% bandwidth cap.
+  for v in $(seq 0 $((HALF - 1))); do
+    for tid in $(vcpu_tid "$v"); do
+      set_deadline_vcpu "$tid" || true
+    done
+  done
+  # big half: prefer these vCPUs with a negative nice value.
+  for v in $(seq "$HALF" $((CPUS - 1))); do
+    for tid in $(vcpu_tid "$v"); do
+      chrt -o -p 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o -p 0 "$tid" >/dev/null 2>&1 || true
+      renice -n -10 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n -10 -p "$tid" >/dev/null 2>&1 || true
     done
   done
 fi
