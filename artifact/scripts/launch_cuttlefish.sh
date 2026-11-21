@@ -19,14 +19,18 @@
 #                    sym  = all vCPUs equal
 #   STOP_EXISTING  stop any existing cvd instance (default 1)
 #   STAGE_DEVICE   push built binaries & install APKs if present (default 1)
-#   BIN_DIR        host directory with built scheduler binaries
-#   WORKLOADS_DIR  host directory with JankBench/UiBench APKs
+#   BIN_DIR        host x86_64 directory with built scheduler binaries
+#   AOSP_OUT       optional AOSP product output directory for APK copies
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ARTIFACT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
-REPO_ROOT=$(cd "$ARTIFACT_DIR/.." && pwd)
 [ -f "$ARTIFACT_DIR/config.env" ] && . "$ARTIFACT_DIR/config.env"
+PLATFORM=${PLATFORM:-x86_64}
+[ "$PLATFORM" = x86_64 ] || {
+  echo "error: launch_cuttlefish.sh requires PLATFORM=x86_64, got $PLATFORM" >&2
+  exit 2
+}
 
 : "${CF_HOME:?set CF_HOME in artifact/config.env or environment}"
 
@@ -66,11 +70,22 @@ fi
   echo "error: adb not found; install adb or set ADB in artifact/config.env" >&2
   exit 1
 }
-BIN_DIR=${BIN_DIR:-"$ARTIFACT_DIR/build/bin"}
-if [ ! -d "$BIN_DIR" ] && [ -d "$REPO_ROOT/build/bin" ]; then
-  BIN_DIR="$REPO_ROOT/build/bin"
+BIN_DIR=${BIN_DIR:-"$ARTIFACT_DIR/build/bin/x86_64"}
+WORKLOADS_DIR=${WORKLOADS_DIR:-"$ARTIFACT_DIR/workloads/x86_64"}
+AOSP_OUT=${AOSP_OUT:-}
+WORKLOAD_APKS=(
+  "$WORKLOADS_DIR/JankBench-platform-signed.apk"
+  "$WORKLOADS_DIR/UiBench-app-debug.apk"
+  "$WORKLOADS_DIR/UiBenchJankTests-debug.apk"
+)
+AOSP_APKS=()
+if [ -n "$AOSP_OUT" ]; then
+  AOSP_APKS=(
+    "$AOSP_OUT/testcases/JankBench/x86_64/JankBench.apk"
+    "$AOSP_OUT/testcases/UiBench/x86_64/UiBench.apk"
+    "$AOSP_OUT/testcases/UiBenchJankTests/x86_64/UiBenchJankTests.apk"
+  )
 fi
-WORKLOADS_DIR=${WORKLOADS_DIR:-"$ARTIFACT_DIR/workloads"}
 REMOTE_DIR=${REMOTE_DIR:-/data/local/tmp/scx}
 LOG="$CF_HOME/launch_a17_${CPUS}vcpu.log"
 
@@ -87,7 +102,7 @@ sh_() {
 
 for dev in /dev/kvm /dev/vhost-vsock /dev/vhost-net /dev/net/tun; do
   if [ ! -e "$dev" ] || ! (exec 3<>"$dev") 2>/dev/null; then
-    echo "error: host virtualization device $dev is missing or inaccessible (ensure KVM, vhost_vsock, and cuttlefish-base are active on the host)" >&2
+    echo "error: $dev unavailable; check KVM, vhost_vsock, cuttlefish-base" >&2
     exit 1
   fi
 done
@@ -179,17 +194,30 @@ if [ "$STAGE_DEVICE" = 1 ]; then
     done
     # Also create the legacy alias expected by run_full_matrix_14.sh when scx_fcp_behavioral is present
     if [ -f "$BIN_DIR/scx_fcp_behavioral" ]; then
-      sh_ "cp -f '$REMOTE_DIR/scx_fcp_behavioral' '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms' && chmod 755 '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms'" >/dev/null 2>&1 || true
+      sh_ "cp -f '$REMOTE_DIR/scx_fcp_behavioral' '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms' && \
+        chmod 755 '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms'" >/dev/null 2>&1 || true
     fi
   fi
-  if [ -d "$WORKLOADS_DIR" ]; then
-    for apk in "$WORKLOADS_DIR"/*.apk; do
-      [ -f "$apk" ] || continue
-      "$ADB" -s "$SERIAL" install -r -g "$apk" >/dev/null 2>&1 && \
-        echo "installed workload APK: $(basename "$apk")" || \
-        echo "warning: could not install $(basename "$apk")" >&2
+  mkdir -p "$WORKLOADS_DIR"
+  if [ -n "$AOSP_OUT" ]; then
+    for i in "${!AOSP_APKS[@]}"; do
+      if [ -f "${AOSP_APKS[$i]}" ]; then
+        cp -f "${AOSP_APKS[$i]}" "${WORKLOAD_APKS[$i]}"
+        echo "copied AOSP workload APK: ${WORKLOAD_APKS[$i]}"
+      else
+        echo "warning: missing AOSP APK ${AOSP_APKS[$i]}" >&2
+      fi
     done
   fi
+  for apk in "${WORKLOAD_APKS[@]}"; do
+    if [ ! -f "$apk" ]; then
+      echo "warning: missing workload APK $apk; set AOSP_OUT or copy APKs into $WORKLOADS_DIR" >&2
+      continue
+    fi
+    "$ADB" -s "$SERIAL" install -r -g -t --bypass-low-target-sdk-block "$apk" >/dev/null 2>&1 && \
+      echo "installed workload APK: $(basename "$apk")" || \
+      echo "warning: could not install $(basename "$apk")" >&2
+  done
 fi
 
 # 5. Apply optional host vCPU capacity shaping.
