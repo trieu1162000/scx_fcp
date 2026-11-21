@@ -21,6 +21,7 @@ SERIAL=${SERIAL:-127.0.0.1:6520}
 ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 RESULTS_ROOT=${RESULTS_ROOT:-$ROOT/results/jankbench}
+WORKLOADS_DIR=${WORKLOADS_DIR:-$ROOT/workloads}
 OUT="$RESULTS_ROOT/$POLICY/run-$RUN"
 # Android SQLiteOpenHelper creates the file without an extension.
 DB=""
@@ -433,7 +434,7 @@ check_inject_permission() {
     *granted=true*) return 0 ;;
   esac
   log "INJECT_EVENTS missing ($granted), reinstalling platform APK"
-  "${A[@]}" install -r -g "$ROOT/workloads/JankBench-platform-signed.apk" >>"$LOG" 2>&1 || true
+  "${A[@]}" install -r -g "$WORKLOADS_DIR/JankBench-platform-signed.apk" >>"$LOG" 2>&1 || true
   sh_ "pm grant --user $ANDROID_USER $BM_PKG android.permission.INJECT_EVENTS" >/dev/null 2>&1 || true
   granted=$(sh_ "dumpsys package $BM_PKG" | tr -d '\r' | grep 'android.permission.INJECT_EVENTS: granted=' | head -1)
   case "$granted" in

@@ -79,7 +79,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PAPER=$(cd "$HERE/../.." && pwd)
 [ -f "$PAPER/config.env" ] && . "$PAPER/config.env"
 OUTROOT=${OUTROOT:-$PAPER/results/uibench_stable}
-APKDIR=${APKDIR:-$PAPER/workloads}
+APKDIR=${APKDIR:-${WORKLOADS_DIR:-$PAPER/workloads}}
 
 APP_APK=${UI_APP_APK:-$APKDIR/UiBench-app-debug.apk}
 TEST_APK=${UI_TEST_APK:-$APKDIR/UiBenchJankTests-debug.apk}
