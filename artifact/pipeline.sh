@@ -28,6 +28,7 @@ Commands:
   launch                launch Cuttlefish or prepare the configured device
   smoke                 one JankBench ID across supported policies
   full                  full 14-test matrix (Cuttlefish or SA8155P)
+  overhead              eBPF-overhead block (separate from timing)
   resume --out DIR      resume an existing full campaign
   analyze DIR           integrate a full campaign (optional --out-dir DIR)
   help                  this message
@@ -139,6 +140,9 @@ PY
         ;;
       *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
     esac
+    ;;
+  overhead)
+    exec "$INTERNAL/run_bpf_overhead.sh" "$@"
     ;;
   resume)
     case "$PLATFORM" in
