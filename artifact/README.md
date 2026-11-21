@@ -15,6 +15,7 @@ paper's synthetic scaling (`fcp_frame_bench`), AOSP `JankBench`, AOSP
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
 ./artifact/pipeline.sh full --out artifact/results/full14
+./artifact/pipeline.sh overhead --out artifact/results/bpf_overhead
 ./artifact/pipeline.sh analyze artifact/results/full14 --out-dir artifact/results/full14/integration
 ```
 
@@ -47,7 +48,7 @@ eBPF Overhead:       /proc/sys/kernel/bpf_stats_enabled (run_time_ns, run_cnt)
 
 ## Packaged entrypoints
 
-- **Unified pipeline (`artifact/pipeline.sh`)**: `build | launch | smoke | full | resume | analyze`
+- **Unified pipeline (`artifact/pipeline.sh`)**: `build | launch | smoke | full | overhead | resume | analyze`
 - **Cuttlefish launcher (`artifact/scripts/launch_cuttlefish.sh`)**: parameterized `4/8/16/32`-vCPU guest launcher
 - **Standalone suite harnesses (`../tests/`)**:
   - `tests/synthetic/run_fcp_frame_bench.sh`

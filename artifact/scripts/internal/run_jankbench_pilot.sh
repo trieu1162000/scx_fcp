@@ -566,6 +566,26 @@ prepare_app
 wait_quiet || true
 log "boot ready kernel=$(sh_ 'uname -r' | tr -d '\r') nproc=$(sh_ 'nproc' | tr -d '\r') selinux=$(sh_ 'getenforce' | tr -d '\r') uptime=$(sh_ 'cat /proc/uptime' | tr -d '\r')"
 
+# Cuttlefish exposes the same symmetric cpu_capacity sysfs for sym and dl.
+# Tell the FCP variants explicitly which CPUs carry the high-capacity label.
+FCP_CAPACITY_ARGS=""
+GUEST_NPROC=$(sh_ 'nproc' | tr -d '\r')
+if [ -n "$BIN" ]; then
+  case "$BIN" in
+    scx_fcp*)
+      case "$GUEST_NPROC" in
+        ''|*[!0-9]*) die "invalid guest nproc: ${GUEST_NPROC:-empty}" ;;
+      esac
+      FCP_CAPACITY_ARGS=$(fcp_capacity_args "${TOPO:-}" "$GUEST_NPROC" "${PLATFORM:-x86_64}") || \
+        die "could not derive capacity labels for topology=${TOPO:-unset} nproc=$GUEST_NPROC"
+      if [ -n "$FCP_CAPACITY_ARGS" ]; then
+        ARGS="${ARGS:+$ARGS }$FCP_CAPACITY_ARGS"
+      fi
+      ;;
+  esac
+fi
+log "topology=${TOPO:-unset} guest_nproc=$GUEST_NPROC capacity_args=${FCP_CAPACITY_ARGS:-none}"
+
 STATE_BEFORE=$(state)
 OPS_BEFORE=$(ops)
 if [ "$POLICY" = eevdf ] || [ "$POLICY" = eevdf_proxy_exec ]; then

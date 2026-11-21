@@ -306,20 +306,30 @@ kill_all_scx() {
 
 attach_policy() {
   local policy=$1
-  local bin="" args="" ops="" state="enabled"
+  local bin="" args="" ops="" state="enabled" fcp_args="" guest_nproc=""
+  case "$policy" in
+    scx_fcp*)
+      guest_nproc=$(sh_ 'nproc' | tr -d '\r')
+      case "$guest_nproc" in
+        ''|*[!0-9]*) die "invalid guest nproc for $policy: ${guest_nproc:-empty}" ;;
+      esac
+      fcp_args=$(fcp_capacity_args "${TOPO:-}" "$guest_nproc" "${PLATFORM:-x86_64}") || \
+        die "could not derive capacity labels for topology=${TOPO:-unset} nproc=$guest_nproc"
+      ;;
+  esac
   case "$policy" in
     eevdf|eevdf_proxy_exec) state=disabled; ops="" ;;
-    scx_fcp) bin=scx_fcp; ops=fcp ;;
-    scx_fcp_behavioral) bin=scx_fcp_behavioral; ops=fcp_zh ;;
-    scx_fcp_v_stable_root) bin=scx_fcp_v_stable_root; ops=fcp_zh ;;
-    scx_fcp_v_bounded_fanout) bin=scx_fcp_v_bounded_fanout; ops=fcp_zh ;;
-    scx_fcp_v_tail_guard) bin=scx_fcp_v_tail_guard; ops=fcp_zh ;;
-    scx_fcp_v_jank_guard) bin=scx_fcp_v_jank_guard; ops=fcp_zh ;;
-    scx_fcp_v_a_depth3) bin=scx_fcp_v_a_depth3; ops=fcp_zh ;;
-    scx_fcp_v_a_expiry75) bin=scx_fcp_v_a_expiry75; ops=fcp_zh ;;
-    scx_fcp_v_a_depth3_expiry75) bin=scx_fcp_v_a_depth3_expiry75; ops=fcp_zh ;;
-    scx_fcp_v_a_depth3_tgid1ms) bin=scx_fcp_v_a_depth3_tgid1ms; ops=fcp_zh ;;
-    scx_fcp_v_a_depth4) bin=scx_fcp_v_a_depth4; ops=fcp_zh ;;
+    scx_fcp) bin=scx_fcp; args="$fcp_args"; ops=fcp ;;
+    scx_fcp_behavioral) bin=scx_fcp_behavioral; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_stable_root) bin=scx_fcp_v_stable_root; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_bounded_fanout) bin=scx_fcp_v_bounded_fanout; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_tail_guard) bin=scx_fcp_v_tail_guard; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_jank_guard) bin=scx_fcp_v_jank_guard; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth3) bin=scx_fcp_v_a_depth3; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_expiry75) bin=scx_fcp_v_a_expiry75; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth3_expiry75) bin=scx_fcp_v_a_depth3_expiry75; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth3_tgid1ms) bin=scx_fcp_v_a_depth3_tgid1ms; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth4) bin=scx_fcp_v_a_depth4; args="$fcp_args"; ops=fcp_zh ;;
     scx_p2dq_pelt_off) bin=scx_p2dq; args="--enable-pelt false"; ops=p2dq ;;
     scx_lavd) bin=scx_lavd; ops=lavd ;;
     *) die "unknown policy $policy" ;;
@@ -343,7 +353,7 @@ attach_policy() {
   while [ $SECONDS -lt $deadline ]; do
     st=$(scx_state); o=$(scx_ops)
     if [ "$st" = "enabled" ] && printf '%s' "$o" | grep -q "$ops"; then
-      log "policy $policy enabled ops=$o"
+      log "policy $policy enabled ops=$o capacity_args=${fcp_args:-none}"
       sh_ "cat $logf" > "$OUT/${policy}_scheduler.log" 2>/dev/null || true
       sh_ 'dmesg' | grep -iE 'sched_ext|scx|lavd|p2dq|fcp' | tail -20 > "$OUT/${policy}_dmesg.txt" 2>/dev/null || true
       return 0
