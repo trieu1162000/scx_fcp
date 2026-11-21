@@ -462,7 +462,9 @@ def test_definitions(benchmarks, require_known_invalid):
             "required": True,
         })
     for test, label in UI_TESTS:
-        known_invalid = test in KNOWN_INVALID_TESTS
+        # --require-known-invalid means the caller rebuilt the APK and expects
+        # bitmap-upload to be a normal, required measurement.
+        known_invalid = test in KNOWN_INVALID_TESTS and not require_known_invalid
         tests.append({
             "key": f"uibench:{test}",
             "workload": "uibench",
@@ -471,7 +473,7 @@ def test_definitions(benchmarks, require_known_invalid):
             "slug": None,
             "benchmark_id": None,
             "known_invalid": known_invalid,
-            "required": (not known_invalid) or require_known_invalid,
+            "required": not known_invalid,
         })
     return tests
 
@@ -1027,7 +1029,10 @@ def load_jankbench_slug(root, spec, policies, expected, freeze, args,
 
 def walk_metrics(root):
     for base, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in ("_invalid", "_warmup")]
+        # Keep the integration view in lockstep with validate_uibench.py:
+        # _smoke, _warmup, _invalid, and any future private scratch subtree
+        # must never be mistaken for a measured rep.
+        dirs[:] = [d for d in dirs if not d.startswith("_")]
         if "metrics.json" in files:
             yield os.path.join(base, "metrics.json")
 
@@ -1518,7 +1523,7 @@ def markdown_report(report, include_partial):
         f"- Required cells: {report['cells_required_complete']}/"
         f"{report['cells_required']} complete")
     lines.append(
-        f"- All cells (including known-invalid tests): "
+        f"- All cells (including bitmap-upload): "
         f"{report['cells_pass']}/{report['cells_expected']} pass")
     lines.append(
         f"- All 14 tests at {report['runs_expected']}/{report['runs_expected']}: "
@@ -1657,7 +1662,8 @@ def latex_table_jankbench(report, include_partial):
         r"\centering",
         r"\small",
         r"\caption{Full AOSP \texttt{JankBench} matrix on the 16-vCPU "
-        r"Cuttlefish device: 8 benchmarks $\times$ 4 policies, "
+        r"Cuttlefish device: 8 benchmarks $\times$ "
+        f"{len(POLICIES)} policies, "
         f"{report['runs_expected']} valid runs per cell. The mean is "
         r"frame-weighted across valid runs; $p_{50}$, $p_{95}$, and $p_{99}$ "
         r"are means of the per-run summary percentiles; jank is "
@@ -1710,6 +1716,16 @@ def latex_table_uibench(report, include_partial):
     for cell in report["cells"]:
         if cell["workload"] == "uibench":
             by_test[cell["test"]][cell["policy"]] = cell
+    bitmap_known_invalid = any(
+        cell["test"] == "bitmap-upload" and cell["status"] == "known-invalid"
+        for cell in report["cells"])
+    bitmap_note = (
+        r"The \texttt{bitmap-upload} row is known-invalid with the frozen APK "
+        r"and is not a scheduler result. "
+        if bitmap_known_invalid else
+        r"The \texttt{bitmap-upload} row uses the fixed debug APK and is "
+        r"measured like the other tests. "
+    )
     lines = [
         latex_status_comment(report),
         f"% Source: {report['root']}",
@@ -1718,13 +1734,13 @@ def latex_table_uibench(report, include_partial):
         r"\centering",
         r"\small",
         r"\caption{Full AOSP \texttt{UiBenchJankTests} matrix on the 16-vCPU "
-        r"Cuttlefish device: 6 tests $\times$ 4 policies, "
+        r"Cuttlefish device: 6 tests $\times$ "
+        f"{len(POLICIES)} policies, "
         f"{report['runs_expected']} valid reps per cell. GfxMonitor reports "
         r"whole-millisecond percentiles and no mean frame time; $p_{50}$ is "
         r"the central metric. Jank is frame-weighted across valid reps. $n$ "
         r"is valid reps / expected. \texttt{--} marks an incomplete cell. "
-        r"The \texttt{bitmap-upload} row is known-invalid with the frozen APK "
-        r"and is not a scheduler result.}",
+        + bitmap_note + "}",
         r"\label{tab:full14_uibench}",
         r"\begin{tabular}{llrrrrrr}",
         r"\toprule",
@@ -1781,8 +1797,7 @@ def html_report(report, include_partial):
             f"<strong>Complete.</strong> {report['cells_required_complete']}/"
             f"{report['cells_required']} required cells have "
             f"{report['runs_expected']} valid runs/reps. "
-            f"{report['cells_pass']}/{report['cells_expected']} cells pass; "
-            "the known-invalid test is reported separately.")
+            f"{report['cells_pass']}/{report['cells_expected']} cells pass.")
     elif status == "integrity-error":
         status_text = (
             f"<strong>Integrity error.</strong> {len(report['integrity_errors'])} "
@@ -1910,13 +1925,19 @@ def html_report(report, include_partial):
             lines.append(f'        <li>{esc(error)}</li>')
         lines.append('      </ul>')
         lines.append('    </div>')
+    ui_note = (
+        "The frozen UiBench APK cannot run bitmap-upload; that test is "
+        "reported as known-invalid, not as a scheduler result."
+        if report["known_invalid_tests"] else
+        "UiBench uses the fixed debug APK; bitmap-upload is included as a "
+        "measured test."
+    )
     lines.append(
         f'    <p class="is-size-7 has-text-grey">Generated from '
         f"<code>{esc(report['root'])}</code> at {esc(report['generated_at'])}. "
         f"Valid runs/reps per cell: {report['runs_expected']}. "
         f"Excluded invalid attempts: {len(report['excluded_invalid_runs'])}. "
-        "The frozen UiBench APK cannot run bitmap-upload; that test is "
-        "reported as known-invalid, not as a scheduler result.</p>")
+        f"{ui_note}</p>")
     lines.extend([
         '  </div>',
         '</section>',

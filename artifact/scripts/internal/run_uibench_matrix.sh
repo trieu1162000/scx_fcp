@@ -303,6 +303,10 @@ attach_policy() {
 
   kill_all_scx
   sleep 2
+  if [ "$policy" = "eevdf_proxy_exec" ]; then
+    sh_ 'cat /proc/cmdline' | tr -d '\r' | grep -q 'sched_proxy_exec=1' || \
+      die "eevdf_proxy_exec requested but guest cmdline lacks sched_proxy_exec=1"
+  fi
   if [ "$state" = "disabled" ]; then
     [ "$(scx_state)" = "disabled" ] || die "EEVDF requested but sched_ext state=$(scx_state) ops=$(scx_ops)"
     log "policy eevdf ready, sched_ext disabled"
@@ -407,6 +411,7 @@ run_block_once() {
   mkdir -p "$blockdir"
   host_snapshot "$blockdir/host_before.json"
   log "block start policy=$policy round=$round reps=$reps"
+  sh_ 'cat /proc/cmdline' | tr -d '\r' > "$blockdir/cmdline.txt" 2>/dev/null || true
   if [ "$NO_REBOOT" = 1 ]; then
     prepare_no_reboot
   else
@@ -466,12 +471,22 @@ ui_fixed_smoke() {
   local got
   got=$(sha256sum "$UI_APP_APK" | awk '{print $1}')
   log "fixed-APK smoke: bitmap-upload 1 rep with $UI_APP_APK"
+  # A previous run may have left _smoke/2026-.../metrics.json behind. The
+  # validator below globs recursively and would then see more than one row,
+  # falsely failing the whole block. Each smoke run owns a fresh directory.
+  rm -rf "$OUT/_smoke"
+  # The image can restart SystemUI once several minutes after boot.  Running
+  # the smoke while that restart lands invalidates a perfectly good workload
+  # and made the whole proxy block disappear.  Settle the UI and the load
+  # first; this is also what the measured blocks do after their reboot.
+  wait_ui_stable || die "UI did not settle before fixed-APK smoke"
+  wait_quiet || true
   kill_all_scx
   sleep 2
   "$HERE/run_uibench.sh" -s "$SERIAL" -p eevdf -r 1 -n 99 \
     --out "$OUT/_smoke" --tests bitmap-upload > "$OUT/_smoke.log" 2>&1 || \
     log "WARNING smoke run returned non-zero"
-  python3 - "$OUT/_smoke" "$FIXED_UI_APK_SHA" <<'PY'
+  if ! python3 - "$OUT/_smoke" "$FIXED_UI_APK_SHA" <<'PY'
 import glob, json, os, sys
 root, want = sys.argv[1], sys.argv[2]
 paths = glob.glob(os.path.join(root, "**", "metrics.json"), recursive=True)
@@ -496,9 +511,11 @@ if int(row.get("frames") or 0) < 100:
 print(f"SMOKE PASSED: bitmap-upload frames={row.get('frames')} "
       f"p50={row.get('p50_ms')} p95={row.get('p95_ms')} app_sha={want[:12]}")
 PY
-  local rc=$?
-  log "fixed-APK smoke rc=$rc"
-  [ "$rc" = 0 ] || die "fixed bitmap-upload smoke failed; refusing to run blocks"
+  then
+    log "fixed-APK smoke validation failed; refusing to run blocks"
+    return 1
+  fi
+  log "fixed-APK smoke passed"
   return 0
 }
 

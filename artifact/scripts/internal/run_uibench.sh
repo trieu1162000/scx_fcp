@@ -284,6 +284,15 @@ PY
 
 # ---------------------------------------------------------------------------
 
+# A policy label is not evidence: refuse to record the ProxyExec baseline on a
+# kernel whose cmdline did not actually enable it.
+if [ "$POLICY" = "eevdf_proxy_exec" ]; then
+  sh_ 'cat /proc/cmdline' | tr -d '\r' | grep -q 'sched_proxy_exec=1' || {
+    echo "eevdf_proxy_exec requested but guest cmdline lacks sched_proxy_exec=1" >&2
+    exit 1
+  }
+fi
+
 if [ "$INSTALL" = 1 ]; then
   install_apks
 fi
