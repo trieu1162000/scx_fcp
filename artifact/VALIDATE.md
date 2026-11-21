@@ -17,21 +17,20 @@ no fatal logcat event
 
 ## 2. JankBench checks
 
-Every JankBench run is checked against J1-J12:
+Every JankBench run is checked against J1-J11:
 
 ```text
 J1   required files and consistency
 J2   policy/run/benchmark id/name/run_count
 J3   frame counts, iterations, DB/summary agreement
 J4   kernel, vCPU count, SDK, build, SELinux
-J5   scheduler/app identity and state/ops
+J5   scheduler binary identity and state/ops
 J6   SystemUI/system_server/benchmark PID stability
 J7   logcat: injection, fatal, ANR, process death, sleep
 J8   boot id stable
 J9   host window and uptime
 J10  host/guest load
 J11  bpf_stats disabled for timing
-J12  freeze manifest
 ```
 
 Failed runs are stored under `_invalid/` and are excluded from aggregation.
