@@ -33,6 +33,7 @@ BINDIR=${BINDIR:-${BIN_DIR:-$PAPER/build/bin}}
 NO_REBOOT=0
 VALIDATE=${VALIDATE:-1}
 VALIDATE_ATTEMPTS=${VALIDATE_ATTEMPTS:-3}
+BPF_STATS=${BPF_STATS:-0}
 # Tests that are known to be unmeasurable with the frozen APK.  Their rows are
 # still attempted and reported, but they do not make the whole block fail (a
 # single permanently-invalid test must not discard valid data for the others).
@@ -84,6 +85,11 @@ system_server_pid() { sh_ 'pidof system_server' | tr -d '\r' | awk '{print $1}' 
 scx_state() { sh_ 'cat /sys/kernel/sched_ext/state 2>/dev/null' | tr -d '\r' || true; }
 scx_ops() { sh_ 'cat /sys/kernel/sched_ext/root/ops 2>/dev/null' | tr -d '\r' || true; }
 boot_id() { sh_ 'cat /proc/sys/kernel/random/boot_id' | tr -d '\r' || true; }
+bpf_stats_set() { sh_ "echo $1 > /proc/sys/kernel/bpf_stats_enabled" >/dev/null 2>&1 || true; }
+bpf_stats_get() { sh_ 'cat /proc/sys/kernel/bpf_stats_enabled 2>/dev/null' | tr -d '\r' || true; }
+bpf_snapshot() {
+  "${A[@]}" shell 'bpftool prog show --json' > "$1" 2>/dev/null || true
+}
 
 services_ready() {
   local activity ss sysui
@@ -320,7 +326,7 @@ attach_policy() {
   case "$policy" in
     eevdf|eevdf_proxy_exec) state=disabled; ops="" ;;
     scx_fcp) bin=scx_fcp; args="$fcp_args"; ops=fcp ;;
-    scx_fcp_behavioral) bin=scx_fcp_behavioral; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_behavioral|scx_fcp_zh) bin=scx_fcp_behavioral; args="$fcp_args"; ops=fcp_zh ;;
     scx_fcp_v_stable_root) bin=scx_fcp_v_stable_root; args="$fcp_args"; ops=fcp_zh ;;
     scx_fcp_v_bounded_fanout) bin=scx_fcp_v_bounded_fanout; args="$fcp_args"; ops=fcp_zh ;;
     scx_fcp_v_tail_guard) bin=scx_fcp_v_tail_guard; args="$fcp_args"; ops=fcp_zh ;;
@@ -465,10 +471,66 @@ run_block_once() {
     --out "$OUT/_warmup/$policy/round$round" --tests "$WARMUP_TEST" > "$blockdir/warmup.log" 2>&1 || \
     log "WARNING warm-up failed"
 
+  local bpf_before="" bpf_after="" start_iso="" end_iso=""
+  if [ "$BPF_STATS" = 1 ]; then
+    bpf_stats_set 1
+    bpf_before=$(bpf_stats_get)
+    printf '%s\n' "$bpf_before" > "$blockdir/bpf_stats_enabled_before.txt"
+    bpf_snapshot "$blockdir/bpf_before.json"
+    start_iso=$(date -Iseconds)
+  fi
+
   log "measured policy=$policy round=$round reps=$reps"
+  local ui_extra=()
+  [ "$BPF_STATS" = 1 ] && ui_extra+=(--no-install)
   "$HERE/run_uibench.sh" -s "$SERIAL" -p "$policy" -r "$reps" -n "$round" \
-    --out "$blockdir/raw" --tests "$TESTS" --shuffle > "$blockdir/run.log" 2>&1 || \
+    --out "$blockdir/raw" --tests "$TESTS" --shuffle "${ui_extra[@]}" \
+    > "$blockdir/run.log" 2>&1 || \
     log "WARNING measured block returned non-zero"
+
+  if [ "$BPF_STATS" = 1 ]; then
+    end_iso=$(date -Iseconds)
+    bpf_snapshot "$blockdir/bpf_after.json"
+    bpf_after=$(bpf_stats_get)
+    printf '%s\n' "$bpf_after" > "$blockdir/bpf_stats_enabled_after.txt"
+    bpf_stats_set 0
+    local guest_nproc
+    guest_nproc=$(sh_ 'nproc' | tr -d '\r')
+    python3 - "$blockdir" "$policy" "$round" "$start_iso" "$end_iso" \
+      "$bpf_before" "$bpf_after" "$guest_nproc" <<'PY'
+import glob
+import json
+import os
+import sys
+from pathlib import Path
+
+block = Path(sys.argv[1])
+policy, run = sys.argv[2], int(sys.argv[3])
+start, end = sys.argv[4], sys.argv[5]
+frames = 0
+for path in glob.glob(str(block / "raw" / "**" / "metrics.json"), recursive=True):
+    try:
+        data = json.load(open(path))
+    except (OSError, json.JSONDecodeError):
+        continue
+    for row in data.get("tests") or []:
+        frames += int(row.get("frames") or 0)
+manifest = {
+    "policy": policy,
+    "run": run,
+    "host_start": start,
+    "host_end": end,
+    "nproc": int(sys.argv[8] or 0),
+    "bpf_stats_enabled_before": sys.argv[6],
+    "bpf_stats_enabled_after": sys.argv[7],
+}
+summary = {"frames": frames, "iterations": [0]}
+(block / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+(block / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+PY
+    python3 "$HERE/parse_bpf_overhead.py" "$blockdir" >> "$LOG" 2>&1 || \
+      log "WARNING UiBench overhead parser failed for $blockdir"
+  fi
 
   stop_policy
   host_snapshot "$blockdir/host_after.json"

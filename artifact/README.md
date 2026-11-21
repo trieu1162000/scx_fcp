@@ -15,8 +15,9 @@ paper's synthetic scaling (`fcp_frame_bench`), AOSP `JankBench`, AOSP
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
 ./artifact/pipeline.sh full --out artifact/results/full14
-./artifact/pipeline.sh overhead --out artifact/results/bpf_overhead
+./artifact/pipeline.sh overhead --out artifact/results/bpf_overhead --suite all
 ./artifact/pipeline.sh overhead --quick          # one-run cross-check only
+./artifact/pipeline.sh overhead-analyze artifact/results/bpf_overhead
 ./artifact/pipeline.sh analyze artifact/results/full14 --out-dir artifact/results/full14/integration
 ```
 
