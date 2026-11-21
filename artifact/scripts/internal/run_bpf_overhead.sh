@@ -8,7 +8,11 @@
 #
 # Usage:
 #   ./artifact/pipeline.sh overhead --out DIR
+#   ./artifact/pipeline.sh overhead --quick
 #   OVERHEAD_REPS=10 OVERHEAD_BENCH_IDS=0 ./artifact/pipeline.sh overhead
+#
+# --quick runs one JankBench ID, one repetition, one iteration, and one policy
+# (scx_fcp unless --policies is given). It is a cross-check, not paper data.
 #
 # Protocol defaults live in config.env: OVERHEAD_REPS, OVERHEAD_BENCH_IDS,
 # OVERHEAD_RUN_COUNT, OVERHEAD_WARMUP_ITERATIONS, OVERHEAD_POLICIES, and
@@ -28,9 +32,11 @@ WARMUP_ITERATIONS=${OVERHEAD_WARMUP_ITERATIONS:?config.env must define OVERHEAD_
 POLICIES=${OVERHEAD_POLICIES:?config.env must define OVERHEAD_POLICIES}
 OUT=${OUT:-${OVERHEAD_OUT:?config.env must define OVERHEAD_OUT}}
 PARSER=$ARTIFACT/scripts/internal/parse_bpf_overhead.py
+QUICK=0
+POLICIES_SET=0
 
 usage() {
-  sed -n '2,22p' "$0"
+  sed -n '2,19p' "$0"
 }
 
 while [ $# -gt 0 ]; do
@@ -38,13 +44,22 @@ while [ $# -gt 0 ]; do
     --out) OUT=$2; shift 2 ;;
     --reps) REPS=$2; shift 2 ;;
     --bench-ids) BENCH_IDS=$2; shift 2 ;;
-    --policies) POLICIES=$2; shift 2 ;;
+    --policies) POLICIES=$2; POLICIES_SET=1; shift 2 ;;
     --run-count) RUN_COUNT=$2; shift 2 ;;
     --warmup) WARMUP_ITERATIONS=$2; shift 2 ;;
+    --quick) QUICK=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+if [ "$QUICK" = 1 ]; then
+  REPS=1
+  BENCH_IDS=0
+  RUN_COUNT=1
+  WARMUP_ITERATIONS=0
+  [ "$POLICIES_SET" = 1 ] || POLICIES=scx_fcp
+fi
 
 [ -f "$ARTIFACT/scripts/internal/run_stage3_jankbench.sh" ] || {
   echo "missing run_stage3_jankbench.sh" >&2

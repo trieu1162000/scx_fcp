@@ -27,8 +27,8 @@ Commands:
   build                 build scheduler for the selected platform
   launch                launch Cuttlefish or prepare the configured device
   smoke                 one JankBench ID across supported policies
-  full                  full 14-test matrix (Cuttlefish or SA8155P)
-  overhead              eBPF-overhead block (separate from timing)
+  full [--quick]        full 14-test matrix; --quick = smoke one cell
+  overhead [--quick]    eBPF-overhead block; --quick = one cross-check run
   resume --out DIR      resume an existing full campaign
   analyze DIR           integrate a full campaign (optional --out-dir DIR)
   help                  this message

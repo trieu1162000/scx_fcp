@@ -19,6 +19,7 @@
 #   run_full_matrix_14.sh [--out DIR] [--policies a,b,c,d] [--runs 10]
 #                         [--jank-tests 0,1,...] [--ui-tests t1,t2]
 #                         [--skip-jank] [--skip-uibench] [--resume] [--smoke]
+#                         [--quick]
 #
 # Everything is written under OUT:
 #   orchestrator.log
@@ -72,7 +73,7 @@ while [ $# -gt 0 ]; do
     --ui-tests) UI_TESTS=$2; shift 2 ;;
     --skip-jank) SKIP_JANK=1; shift ;;
     --skip-uibench) SKIP_UI=1; shift ;;
-    --smoke) SMOKE=1; shift ;;
+    --smoke|--quick) SMOKE=1; shift ;;
     --resume) RESUME=1; shift ;;
     -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
