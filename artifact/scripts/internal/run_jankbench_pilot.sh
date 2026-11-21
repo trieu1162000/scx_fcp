@@ -21,9 +21,10 @@ SERIAL=${SERIAL:-127.0.0.1:6520}
 ADB=${ADB:-adb}
 A=("$ADB" -s "$SERIAL")
 RESULTS_ROOT=${RESULTS_ROOT:-$ROOT/results/jankbench}
+WORKLOADS_DIR=${WORKLOADS_DIR:-$ROOT/workloads}
 OUT="$RESULTS_ROOT/$POLICY/run-$RUN"
 # Android SQLiteOpenHelper creates the file without an extension.
-DB=/data/data/com.android.benchmark/databases/BenchmarkResults
+DB=""
 REMOTE=/data/local/tmp/scx
 BM_PKG=com.android.benchmark
 BM_ACT=$BM_PKG/.app.RunLocalBenchmarksActivity
@@ -199,11 +200,20 @@ reboot_and_prepare() {
   wait_device || die "device did not return after adb root"
   sh_ 'setenforce 0' >/dev/null 2>&1 || true
 
-  local deadline=$((SECONDS + 300))
-  until [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ]; do
-    [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
-    sleep 3
-  done
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    sleep 30
+    local deadline=$((SECONDS + 300))
+    until [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ]; do
+      [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
+      sleep 3
+    done
+  else
+    local deadline=$((SECONDS + 300))
+    until [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ]; do
+      [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
+      sleep 3
+    done
+  fi
 
   ensure_services || die "framework services did not become ready after reboot"
 
@@ -221,6 +231,13 @@ reboot_and_prepare() {
 }
 
 settle_system() {
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ] ||
+      die "boot_completed is not 1 before benchmark"
+    services_ready || die "framework services unavailable before benchmark"
+    log "device ready boot_completed=1"
+    return 0
+  fi
   # The first SystemUI process on this image crashes once after boot even in
   # Permissive mode. Wait for a stable SystemUI pid and the launcher before
   # starting the workload, otherwise the benchmark cannot launch its activity.
@@ -267,20 +284,29 @@ ensure_awake() {
 }
 
 wait_quiet() {
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    log "skip host/device load wait on ARM64"
+    return 0
+  fi
   # Measurement must start with a quiet host and guest. The image boot
   # transient can keep both busy for minutes after the UI first settles.
-  local deadline=$((SECONDS + 900)) hl gl
+  local deadline=$((SECONDS + 900)) hl gl host_nproc
+  local host_limit=${QUIET_HOST:-}
+  host_nproc=$(nproc)
+  if [ -z "$host_limit" ]; then
+    host_limit=$(awk -v n="$host_nproc" 'BEGIN { printf "%.2f", n * 0.25 }')
+  fi
   while [ $SECONDS -lt $deadline ]; do
     hl=$(awk '{print $1}' /proc/loadavg)
     gl=$(sh_ 'cut -d" " -f1 /proc/loadavg')
-    if awk -v h="$hl" -v g="$gl" 'BEGIN{exit !(h<=3.0 && g<=2.0)}'; then
-      log "load quiet host=$hl guest=$gl"
+    if awk -v h="$hl" -v g="$gl" -v hlim="$host_limit" 'BEGIN{exit !(h<=hlim && g<=2.0)}'; then
+      log "load quiet host=$hl host_limit=$host_limit guest=$gl guest_limit=2.0"
       return 0
     fi
-    log "waiting for quiet host=$hl guest=$gl"
+    log "waiting for quiet host=$hl host_limit=$host_limit guest=$gl guest_limit=2.0"
     sleep 15
   done
-  log "WARNING load did not settle host=${hl:-?} guest=${gl:-?}"
+  log "WARNING load did not settle host=${hl:-?} host_limit=$host_limit guest=${gl:-?} guest_limit=2.0"
   return 1
 }
 
@@ -308,6 +334,10 @@ ensure_unlocked() {
   kg=$(keyguard_showing)
   printf '%s' "$kg" | grep -q 'KeyguardShowing=false' ||
     die "keyguard still showing after dismiss attempts: ${kg:-none}"
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    log "device awake and unlocked, keyguard=false"
+    return 0
+  fi
 
   sh_ 'input keyevent KEYCODE_HOME' >/dev/null 2>&1 || true
   local stable=0 top
@@ -404,8 +434,8 @@ check_inject_permission() {
     *granted=true*) return 0 ;;
   esac
   log "INJECT_EVENTS missing ($granted), reinstalling platform APK"
-  "${A[@]}" install -r -g "$ROOT/workloads/JankBench-platform-signed.apk" >>"$LOG" 2>&1 || true
-  sh_ "pm grant $BM_PKG android.permission.INJECT_EVENTS" >/dev/null 2>&1 || true
+  "${A[@]}" install -r -g "$WORKLOADS_DIR/JankBench-platform-signed.apk" >>"$LOG" 2>&1 || true
+  sh_ "pm grant --user $ANDROID_USER $BM_PKG android.permission.INJECT_EVENTS" >/dev/null 2>&1 || true
   granted=$(sh_ "dumpsys package $BM_PKG" | tr -d '\r' | grep 'android.permission.INJECT_EVENTS: granted=' | head -1)
   case "$granted" in
     *granted=true*) return 0 ;;
@@ -414,15 +444,23 @@ check_inject_permission() {
 }
 
 prepare_app() {
-  sh_ "am force-stop $BM_PKG" >/dev/null 2>&1 || true
-  sh_ "pm clear $BM_PKG" >>"$LOG" 2>&1 || true
+  ANDROID_USER=$(sh_ 'am get-current-user' | tr -d '\r')
+  case "$ANDROID_USER" in
+    ''|*[!0-9]*) die "could not determine current Android user: ${ANDROID_USER:-empty}" ;;
+  esac
+  DB="/data/user/$ANDROID_USER/$BM_PKG/databases/BenchmarkResults"
+  log "Android user=$ANDROID_USER database=$DB"
+  sh_ "am force-stop --user $ANDROID_USER $BM_PKG" >/dev/null 2>&1 || true
+  local clear_result
+  clear_result=$(sh_ "pm clear --user $ANDROID_USER $BM_PKG" | tr -d '\r')
+  [ "$clear_result" = Success ] || die "failed to clear $BM_PKG data for user $ANDROID_USER: ${clear_result:-no output}"
   check_inject_permission
   sh_ 'settings put global stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
   sh_ 'settings put system screen_off_timeout 2147483647' >/dev/null 2>&1 || true
   # Do not inject events into a dead activity service: resolve the runner
   # activity first and fail loudly instead of timing out in wait_for_results.
   local resolved
-  resolved=$(sh_ "cmd package resolve-activity --brief -n $BM_ACT" | tr -d '\r' | tail -n1)
+  resolved=$(sh_ "cmd package resolve-activity --brief --user $ANDROID_USER -n $BM_ACT" | tr -d '\r' | tail -n1)
   case "$resolved" in
     *RunLocalBenchmarksActivity*) log "benchmark activity resolves: $resolved" ;;
     *) die "benchmark activity does not resolve: ${resolved:-none}" ;;
@@ -523,8 +561,9 @@ ensure_services || die "framework services unavailable before unlock"
 ensure_unlocked
 settle_system
 ensure_awake || die "device did not stay awake before scheduler start"
-wait_quiet || true
 kill_stale_schedulers || die "could not return sched_ext to disabled"
+prepare_app
+wait_quiet || true
 log "boot ready kernel=$(sh_ 'uname -r' | tr -d '\r') nproc=$(sh_ 'nproc' | tr -d '\r') selinux=$(sh_ 'getenforce' | tr -d '\r') uptime=$(sh_ 'cat /proc/uptime' | tr -d '\r')"
 
 STATE_BEFORE=$(state)
@@ -538,14 +577,17 @@ STATE_BEFORE=$(state)
 OPS_BEFORE=$(ops)
 printf '%s\n' "$STATE_BEFORE" > "$OUT/state_before.txt"
 printf '%s\n' "$OPS_BEFORE" >> "$OUT/state_before.txt"
-
-prepare_app
 ensure_awake || die "device did not stay awake before benchmark"
 sh_ 'logcat -c' >/dev/null 2>&1 || true
 SLEEP_EVENTS=0
 UPTIME_START=$(sh_ 'cat /proc/uptime' | tr -d '\r')
 BOOT_ID=$(sh_ 'cat /proc/sys/kernel/random/boot_id' | tr -d '\r')
 SYSTEM_SERVER_BEFORE=$(sh_ 'pidof system_server' | tr -d '\r')
+HOST_NPROC=$(nproc)
+HOST_LOAD_LIMIT=${QUIET_HOST:-}
+if [ -z "$HOST_LOAD_LIMIT" ]; then
+  HOST_LOAD_LIMIT=$(awk -v n="$HOST_NPROC" 'BEGIN { printf "%.2f", n * 0.25 }')
+fi
 HOST_START=$(date -Iseconds)
 HOST_LOAD_START=$(cat /proc/loadavg)
 GUEST_LOAD_START=$(sh_ 'cat /proc/loadavg' | tr -d '\r')
@@ -553,7 +595,7 @@ printf '%s\n' "$HOST_LOAD_START" > "$OUT/host_load_start.txt"
 printf '%s\n' "$GUEST_LOAD_START" > "$OUT/guest_load_start.txt"
 
 BM_ID=${BM_ID:-0}
-BM_CMD="am start -W -n $BM_ACT --eia com.android.benchmark.EXTRA_ENABLED_BENCHMARK_IDS $BM_ID --ei com.android.benchmark.EXTRA_RUN_COUNT $RUN_COUNT --ez com.android.benchmark.FINISH_WHEN_DONE true"
+BM_CMD="am start -W --user $ANDROID_USER -n $BM_ACT --eia com.android.benchmark.EXTRA_ENABLED_BENCHMARK_IDS $BM_ID --ei com.android.benchmark.EXTRA_RUN_COUNT $RUN_COUNT --ez com.android.benchmark.FINISH_WHEN_DONE true"
 log "benchmark id=$BM_ID name=$BENCH_NAME slug=$BENCH_SLUG"
 if [ "$BPF_STATS" = 1 ]; then
   bpf_stats_set 1
@@ -640,14 +682,6 @@ sh_ 'uname -r' | tr -d '\r' > "$OUT/kernel.txt"
 sh_ 'nproc' | tr -d '\r' > "$OUT/nproc.txt"
 sh_ 'getprop ro.build.display.id' | tr -d '\r' > "$OUT/build.txt"
 sh_ 'getprop ro.build.version.sdk' | tr -d '\r' > "$OUT/sdk.txt"
-APP_PATH=$(sh_ "pm path $BM_PKG" | tr -d '\r' | sed 's/^package://' | head -1)
-APP_SHA=$(sh_ "sha256sum '$APP_PATH'" | tr -d '\r' | awk '{print $1}')
-echo "$APP_SHA" > "$OUT/app_sha256.txt"
-if [ -n "$BIN" ]; then
-  sh_ "sha256sum $REMOTE/$BIN" | tr -d '\r' | awk '{print $1}' > "$OUT/scheduler_sha256.txt"
-else
-  echo none > "$OUT/scheduler_sha256.txt"
-fi
 
 STATE_AFTER_BENCH=$(state)
 OPS_AFTER_BENCH=$(ops)
@@ -669,9 +703,10 @@ printf '%s\n%s\n' "$STATE_AFTER" "$OPS_AFTER" > "$OUT/state_after.txt"
 # Write the manifest before parsing so the parser can read it.
 export POLICY RUN SERIAL HOST_START HOST_END UPTIME_START UPTIME_END \
   BOOT_ID STATE_BEFORE OPS_BEFORE STATE_AFTER_BENCH OPS_AFTER_BENCH \
-  STATE_AFTER OPS_AFTER BM_CMD BM_ID AM_RC APP_SHA BIN ARGS OUT CRASH SLEEP_EVENTS \
+  STATE_AFTER OPS_AFTER BM_CMD BM_ID AM_RC BIN ARGS OUT CRASH SLEEP_EVENTS \
   REBOOT TOP_AT_END SYSTEMUI_BEFORE SYSTEMUI_AFTER \
   HOST_LOAD_START HOST_LOAD_END GUEST_LOAD_START GUEST_LOAD_END BPF_STATS \
+  HOST_NPROC HOST_LOAD_LIMIT \
   RUN_COUNT WARMUP_ITERATIONS SYSTEM_SERVER_BEFORE SYSTEM_SERVER_AFTER \
   BOOT_ID_END BM_PID_BEFORE BM_PID_AFTER REFRESH_HZ BENCH_NAME BENCH_SLUG \
   BENCH_ACTIVITY
@@ -693,6 +728,9 @@ m = {
     "policy": env["POLICY"],
     "run": int(env["RUN"]),
     "serial": env["SERIAL"],
+    "platform": env.get("PLATFORM", ""),
+    "host_nproc": int(env["HOST_NPROC"]),
+    "host_load_limit": float(env["HOST_LOAD_LIMIT"]),
     "kernel": open(os.path.join(env["OUT"], "kernel.txt")).read().strip(),
     "nproc": int(open(os.path.join(env["OUT"], "nproc.txt")).read().strip()),
     "build": open(os.path.join(env["OUT"], "build.txt")).read().strip(),
@@ -720,11 +758,11 @@ m = {
     "systemui_pid_after": env.get("SYSTEMUI_AFTER"),
     "benchmark_pid_before": env.get("BM_PID_BEFORE"),
     "benchmark_pid_after": env.get("BM_PID_AFTER"),
+    "host_load_limit_per_cpu": 0.25,
     "refresh_hz": float(env["REFRESH_HZ"]) if env.get("REFRESH_HZ") else None,
     "scheduler_binary": bin_name,
     "scheduler_args": args,
     "scheduler_command": sched_cmd,
-    "scheduler_sha256": open(os.path.join(env["OUT"], "scheduler_sha256.txt")).read().strip(),
     "scx_state_before": env["STATE_BEFORE"],
     "scx_ops_before": env["OPS_BEFORE"],
     "scx_state_after_benchmark": env["STATE_AFTER_BENCH"],
@@ -745,7 +783,6 @@ m = {
     "db_name_on_device": "BenchmarkResults",
     "app_package": "com.android.benchmark",
     "app_version": "2.2",
-    "app_sha256": env["APP_SHA"],
     "crash_suspected": env.get("CRASH") or None,
     "sleep_events_during_run": int(env.get("SLEEP_EVENTS") or 0),
     "bpf_stats_requested": env.get("BPF_STATS") == "1",

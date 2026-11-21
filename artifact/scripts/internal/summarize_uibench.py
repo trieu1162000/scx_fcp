@@ -84,7 +84,8 @@ def load_rows(roots: list[Path]) -> list[dict]:
             if rp in seen:
                 continue
             seen.add(rp)
-            if "_warmup" in rp.parts or "warmup" in rp.parts:
+            if any(part in ("_warmup", "warmup", "_smoke", "_invalid")
+                   for part in rp.parts):
                 continue
             try:
                 data = json.loads(rp.read_text())

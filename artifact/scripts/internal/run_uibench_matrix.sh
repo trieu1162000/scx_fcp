@@ -38,9 +38,8 @@ VALIDATE_ATTEMPTS=${VALIDATE_ATTEMPTS:-3}
 # single permanently-invalid test must not discard valid data for the others).
 ALLOW_INVALID_TESTS=${ALLOW_INVALID_TESTS:-}
 
-# The frozen UiBench app shipped with an NPE in BitmapUploadActivity.  A fixed
-# debug build is available; when it is present and hash-matches, use it for
-# every UiBench block and require bitmap-upload like the other five tests.
+# The frozen UiBench app shipped with an NPE in BitmapUploadActivity. A fixed
+# debug build is available; use it when present and require bitmap-upload.
 FIXED_UI_APK=${FIXED_UI_APK:-${WORKLOADS_DIR:-$PAPER/workloads}/UiBench-app-debug.apk}
 UI_TEST_APK=${UI_TEST_APK:-${WORKLOADS_DIR:-$PAPER/workloads}/UiBenchJankTests-debug.apk}
 export UI_TEST_APK
@@ -150,7 +149,7 @@ wait_device() {
 
 wait_ui_stable() {
   local deadline=$((SECONDS + 360))
-  local last_pid="" stable=0 last_sys="" stable_sys=0 pid top kg up sys
+  local last_pid="" stable=0 last_sys="" stable_sys=0 pid top kg up sys boot
   while [ $SECONDS -lt $deadline ]; do
     if [ "$(wakefulness)" != "Awake" ]; then
       sh_ 'input keyevent KEYCODE_WAKEUP' >/dev/null 2>&1 || true
@@ -163,33 +162,50 @@ wait_ui_stable() {
     up=$(sh_ 'cut -d. -f1 /proc/uptime' | tr -d '\r' || true)
     if [ -n "$pid" ] && [ "$pid" = "$last_pid" ]; then stable=$((stable + 1)); else stable=0; last_pid=$pid; fi
     if [ -n "$sys" ] && [ "$sys" = "$last_sys" ]; then stable_sys=$((stable_sys + 1)); else stable_sys=0; last_sys=$sys; fi
-    if [ -n "$pid" ] && [ -n "$sys" ] && [ "$stable" -ge 6 ] && [ "$stable_sys" -ge 6 ] &&
+    if [ "${PLATFORM:-}" = arm64 ]; then
+      boot=$(sh_ 'getprop sys.boot_completed' | tr -d '\r')
+      if [ "$boot" = "1" ] && [ -n "$pid" ] && [ -n "$sys" ] &&
+         [ "$stable" -ge 6 ] && [ "$stable_sys" -ge 6 ] &&
+         printf '%s' "$kg" | grep -q 'KeyguardShowing=false'; then
+        return 0
+      fi
+    elif [ -n "$pid" ] && [ -n "$sys" ] && [ "$stable" -ge 6 ] && [ "$stable_sys" -ge 6 ] &&
        [ "${up:-0}" -ge 120 ] 2>/dev/null &&
        printf '%s' "$top" | grep -q 'launcher3' && printf '%s' "$kg" | grep -q 'KeyguardShowing=false'; then
       return 0
     fi
-    sh_ 'input keyevent KEYCODE_HOME' >/dev/null 2>&1 || true
+    if [ "${PLATFORM:-}" != arm64 ]; then
+      sh_ 'input keyevent KEYCODE_HOME' >/dev/null 2>&1 || true
+    fi
     sleep 2
   done
   return 1
 }
 
 wait_quiet() {
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    log "skip host/device load wait on ARM64"
+    return 0
+  fi
   # Host and guest must be past the post-boot crash storm.  The image's media
   # codec can keep system_server busy for several minutes.  Waiting here keeps
   # a crash storm from being mistaken for a scheduler effect.
-  local deadline=$((SECONDS + 420))
-  local hl gl
+  local deadline=$((SECONDS + 420)) hl gl host_nproc
+  local host_limit=${QUIET_HOST:-}
+  host_nproc=$(nproc)
+  if [ -z "$host_limit" ]; then
+    host_limit=$(awk -v n="$host_nproc" 'BEGIN { printf "%.2f", n * 0.25 }')
+  fi
   while [ $SECONDS -lt $deadline ]; do
     hl=$(cut -d' ' -f1 /proc/loadavg)
     gl=$(sh_ 'cut -d" " -f1 /proc/loadavg' | tr -d '\r')
-    if [ "${hl%%.*}" -le 3 ] 2>/dev/null && [ "${gl%%.*}" -le 2 ] 2>/dev/null; then
-      log "load quiet host=$hl guest=$gl"
+    if awk -v h="$hl" -v g="$gl" -v hlim="$host_limit" 'BEGIN { exit !(h <= hlim && g <= 2.0) }'; then
+      log "load quiet host=$hl host_limit=$host_limit guest=$gl guest_limit=2.0"
       return 0
     fi
     sleep 15
   done
-  log "WARNING load did not settle host=${hl:-?} guest=${gl:-?}; continuing"
+  log "WARNING load did not settle host=${hl:-?} host_limit=$host_limit guest=${gl:-?} guest_limit=2.0; continuing"
   return 1
 }
 
@@ -216,11 +232,20 @@ reboot_device() {
   "${A[@]}" root >/dev/null 2>&1 || true
   sleep 3
   wait_device || die "device did not return after adb root"
-  local deadline=$((SECONDS + 300))
-  until [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ]; do
-    [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
-    sleep 3
-  done
+  if [ "${PLATFORM:-}" = arm64 ]; then
+    sleep 30
+    local deadline=$((SECONDS + 300))
+    until [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ]; do
+      [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
+      sleep 3
+    done
+  else
+    local deadline=$((SECONDS + 300))
+    until [ "$(sh_ 'getprop sys.boot_completed' | tr -d '\r')" = "1" ]; do
+      [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
+      sleep 3
+    done
+  fi
   ensure_services || die "framework services did not become ready after reboot"
   sh_ 'setenforce 0' >/dev/null 2>&1 || true
   local se
@@ -260,7 +285,6 @@ push_bins() {
   for b in scx_fcp scx_fcp_behavioral scx_fcp_v_a_depth3_tgid1ms scx_lavd scx_p2dq; do
     "${A[@]}" shell "chmod 755 $REMOTE/$b" >/dev/null 2>&1 || true
   done
-  sh_ "sha256sum $REMOTE/scx_fcp_v_a_depth3_tgid1ms $REMOTE/scx_lavd $REMOTE/scx_p2dq" | tr -d '\r' | tee "$OUT/binary_sha256.txt" >/dev/null
 }
 
 kill_all_scx() {
@@ -303,6 +327,10 @@ attach_policy() {
 
   kill_all_scx
   sleep 2
+  if [ "$policy" = "eevdf_proxy_exec" ]; then
+    sh_ 'cat /proc/cmdline' | tr -d '\r' | grep -q 'sched_proxy_exec=1' || \
+      die "eevdf_proxy_exec requested but guest cmdline lacks sched_proxy_exec=1"
+  fi
   if [ "$state" = "disabled" ]; then
     [ "$(scx_state)" = "disabled" ] || die "EEVDF requested but sched_ext state=$(scx_state) ops=$(scx_ops)"
     log "policy eevdf ready, sched_ext disabled"
@@ -407,6 +435,7 @@ run_block_once() {
   mkdir -p "$blockdir"
   host_snapshot "$blockdir/host_before.json"
   log "block start policy=$policy round=$round reps=$reps"
+  sh_ 'cat /proc/cmdline' | tr -d '\r' > "$blockdir/cmdline.txt" 2>/dev/null || true
   if [ "$NO_REBOOT" = 1 ]; then
     prepare_no_reboot
   else
@@ -463,17 +492,25 @@ run_block() {
 ui_fixed_smoke() {
   [ "${UI_FIXED_SMOKE:-1}" = 1 ] || return 0
   [ -n "${UI_APP_APK:-}" ] || return 0
-  local got
-  got=$(sha256sum "$UI_APP_APK" | awk '{print $1}')
   log "fixed-APK smoke: bitmap-upload 1 rep with $UI_APP_APK"
+  # A previous run may have left _smoke/2026-.../metrics.json behind. The
+  # validator below globs recursively and would then see more than one row,
+  # falsely failing the whole block. Each smoke run owns a fresh directory.
+  rm -rf "$OUT/_smoke"
+  # The image can restart SystemUI once several minutes after boot.  Running
+  # the smoke while that restart lands invalidates a perfectly good workload
+  # and made the whole proxy block disappear.  Settle the UI and the load
+  # first; this is also what the measured blocks do after their reboot.
+  wait_ui_stable || die "UI did not settle before fixed-APK smoke"
+  wait_quiet || true
   kill_all_scx
   sleep 2
   "$HERE/run_uibench.sh" -s "$SERIAL" -p eevdf -r 1 -n 99 \
     --out "$OUT/_smoke" --tests bitmap-upload > "$OUT/_smoke.log" 2>&1 || \
     log "WARNING smoke run returned non-zero"
-  python3 - "$OUT/_smoke" "$FIXED_UI_APK_SHA" <<'PY'
+  if ! python3 - "$OUT/_smoke" "$FIXED_UI_APK_SHA" <<'PY'
 import glob, json, os, sys
-root, want = sys.argv[1], sys.argv[2]
+root = sys.argv[1]
 paths = glob.glob(os.path.join(root, "**", "metrics.json"), recursive=True)
 if not paths:
     print("SMOKE FAILED: no metrics.json")
@@ -494,13 +531,16 @@ if int(row.get("frames") or 0) < 100:
     print(f"SMOKE FAILED: frames={row.get('frames')}")
     raise SystemExit(1)
 print(f"SMOKE PASSED: bitmap-upload frames={row.get('frames')} "
-      f"p50={row.get('p50_ms')} p95={row.get('p95_ms')} app_sha={want[:12]}")
+      f"p50={row.get('p50_ms')} p95={row.get('p95_ms')}")
 PY
-  local rc=$?
-  log "fixed-APK smoke rc=$rc"
-  [ "$rc" = 0 ] || die "fixed bitmap-upload smoke failed; refusing to run blocks"
+  then
+    log "fixed-APK smoke validation failed; refusing to run blocks"
+    return 1
+  fi
+  log "fixed-APK smoke passed"
   return 0
 }
+log "UiBench app=${UI_APP_APK:-none}"
 
 # ---------------------------------------------------------------------------
 wait_device || die "device $SERIAL not reachable"
@@ -511,9 +551,6 @@ sh_ 'setenforce 0' >/dev/null 2>&1 || true
 log "host $(uname -r) nproc=$(nproc) mem=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)MB load=$(cat /proc/loadavg)"
 log "device kernel=$(sh_ 'uname -r' | tr -d '\r') nproc=$(sh_ 'nproc' | tr -d '\r') serial=$SERIAL"
 log "policies=$POLICIES tests=$TESTS rounds=$ROUNDS reps=$REPS no_reboot=$NO_REBOOT out=$OUT"
-ui_app_sha=none
-[ -n "${UI_APP_APK:-}" ] && ui_app_sha=$(sha256sum "$UI_APP_APK" | awk '{print $1}')
-log "UiBench app=${UI_APP_APK:-none} sha=$ui_app_sha"
 ui_fixed_smoke
 
 IFS=',' read -r -a POLICY_ARR <<< "$POLICIES"

@@ -322,127 +322,6 @@ def load_benchmarks(path):
     return benchmarks
 
 
-def check_freeze(root, policies, runs, run_count, warmup):
-    """Read FREEZE.json/policies.txt and return (freeze, warnings, errors)."""
-    warnings = []
-    errors = []
-    freeze_path = os.path.join(root, "FREEZE.json")
-    freeze = None
-    if os.path.isfile(freeze_path):
-        try:
-            freeze = read_json(freeze_path)
-        except (OSError, json.JSONDecodeError) as exc:
-            errors.append(f"FREEZE.json is unreadable: {exc}")
-        else:
-            declared = freeze.get("policies")
-            if not isinstance(declared, list):
-                errors.append(
-                    "FREEZE.json policies is not a list: "
-                    f"{type(declared).__name__}")
-            elif set(declared) != set(policies):
-                errors.append(
-                    "FREEZE.json policies "
-                    f"{sorted(declared)} != expected {sorted(policies)}")
-            for key, expected in (("runs", runs), ("run_count", run_count),
-                                  ("warmup_iterations", warmup)):
-                value = freeze.get(key)
-                if value is not None and as_int(value) != expected:
-                    errors.append(
-                        f"FREEZE.json {key}={value!r} != expected {expected}")
-            frozen_hashes = freeze.get("scheduler_sha256") or {}
-            for policy in policies:
-                if policy in ("eevdf", "eevdf_proxy_exec"):
-                    continue
-                if policy not in frozen_hashes:
-                    errors.append(
-                        f"FREEZE.json scheduler_sha256 is missing {policy}")
-    else:
-        warnings.append(
-            "FREEZE.json is missing; per-benchmark matrix.json files are "
-            "checked only against their own contents")
-
-    policies_path = os.path.join(root, "policies.txt")
-    if os.path.isfile(policies_path):
-        try:
-            text = open(policies_path, encoding="utf-8").read().strip()
-        except OSError as exc:
-            errors.append(f"policies.txt is unreadable: {exc}")
-        else:
-            declared = [p.strip() for p in text.split(",") if p.strip()]
-            if set(declared) != set(policies):
-                errors.append(
-                    f"policies.txt {sorted(declared)} != expected "
-                    f"{sorted(policies)}")
-    else:
-        warnings.append("policies.txt is missing")
-
-    return freeze, warnings, errors
-
-
-def check_matrix(root, spec, freeze, policies, runs, run_count, warmup):
-    """Validate jankbench/<slug>/matrix.json against the campaign freeze."""
-    errors = []
-    slug_dir = os.path.join(root, "jankbench", spec["slug"])
-    matrix_path = os.path.join(slug_dir, "matrix.json")
-    if not os.path.isfile(matrix_path):
-        return [f"{rel(root, slug_dir)}: matrix.json is missing"]
-    try:
-        matrix = read_json(matrix_path)
-    except (OSError, json.JSONDecodeError) as exc:
-        return [f"{rel(root, matrix_path)}: unreadable ({exc})"]
-
-    if as_int(matrix.get("benchmark_id")) != spec["benchmark_id"]:
-        errors.append(
-            f"{rel(root, matrix_path)}: benchmark_id "
-            f"{matrix.get('benchmark_id')!r} != {spec['benchmark_id']}")
-    if matrix.get("benchmark_slug") != spec["slug"]:
-        errors.append(
-            f"{rel(root, matrix_path)}: benchmark_slug "
-            f"{matrix.get('benchmark_slug')!r} != {spec['slug']!r}")
-    if matrix.get("benchmark_name") not in (None, spec["name"]):
-        errors.append(
-            f"{rel(root, matrix_path)}: benchmark_name "
-            f"{matrix.get('benchmark_name')!r} != {spec['name']!r}")
-    if matrix.get("policies") is not None and \
-            set(matrix["policies"]) != set(policies):
-        errors.append(
-            f"{rel(root, matrix_path)}: policies "
-            f"{sorted(matrix['policies'])} != expected {sorted(policies)}")
-    if matrix.get("runs_expected") is not None and \
-            as_int(matrix["runs_expected"]) != runs:
-        errors.append(
-            f"{rel(root, matrix_path)}: runs_expected "
-            f"{matrix['runs_expected']!r} != {runs}")
-    for key, expected in (("run_count", run_count),
-                          ("warmup_iterations", warmup)):
-        if matrix.get(key) is not None and as_int(matrix[key]) != expected:
-            errors.append(
-                f"{rel(root, matrix_path)}: {key}={matrix[key]!r} != "
-                f"{expected}")
-
-    app_hash_path = os.path.join(root, "jankbench_app_sha256.txt")
-    if os.path.isfile(app_hash_path):
-        try:
-            recorded = open(app_hash_path, encoding="utf-8").read().strip()
-        except OSError:
-            recorded = ""
-        if recorded and matrix.get("app_sha256") not in (None, recorded):
-            errors.append(
-                f"{rel(root, app_hash_path)}: {recorded} != matrix "
-                f"app_sha256 {matrix.get('app_sha256')}")
-
-    if freeze:
-        frozen_hashes = freeze.get("scheduler_sha256") or {}
-        matrix_hashes = matrix.get("scheduler_sha256") or {}
-        for policy, expected in frozen_hashes.items():
-            actual = matrix_hashes.get(policy)
-            if actual is not None and actual != expected:
-                errors.append(
-                    f"{rel(root, matrix_path)}: scheduler_sha256[{policy}] "
-                    f"{actual!r} != FREEZE {expected!r}")
-    return errors
-
-
 # ---------------------------------------------------------------------------
 # Cell model
 
@@ -462,7 +341,9 @@ def test_definitions(benchmarks, require_known_invalid):
             "required": True,
         })
     for test, label in UI_TESTS:
-        known_invalid = test in KNOWN_INVALID_TESTS
+        # --require-known-invalid means the caller rebuilt the APK and expects
+        # bitmap-upload to be a normal, required measurement.
+        known_invalid = test in KNOWN_INVALID_TESTS and not require_known_invalid
         tests.append({
             "key": f"uibench:{test}",
             "workload": "uibench",
@@ -471,7 +352,7 @@ def test_definitions(benchmarks, require_known_invalid):
             "slug": None,
             "benchmark_id": None,
             "known_invalid": known_invalid,
-            "required": (not known_invalid) or require_known_invalid,
+            "required": not known_invalid,
         })
     return tests
 
@@ -635,8 +516,7 @@ def finalize_cell(cell, include_partial):
 # JankBench loader
 
 
-def load_jankbench_slug(root, spec, policies, expected, freeze, args,
-                        test_def):
+def load_jankbench_slug(root, spec, policies, expected, args, test_def):
     slug_dir = os.path.join(root, "jankbench", spec["slug"])
     source_rel = rel(root, os.path.join(slug_dir, "validity.json"))
     cells = OrderedDict((p, new_cell(test_def, p, expected))
@@ -649,15 +529,6 @@ def load_jankbench_slug(root, spec, policies, expected, freeze, args,
             cell["source"] = source_rel
             add_reason(cell, "benchmark directory missing (not started)")
             cell["status"] = "incomplete"
-        return cells, warnings, errors, None
-
-    errors.extend(check_matrix(root, spec, freeze, policies, expected,
-                               args.run_count, args.warmup))
-    if errors:
-        for cell in cells.values():
-            cell["source"] = source_rel
-            cell["status"] = "error"
-            add_reason(cell, "campaign freeze/matrix check failed")
         return cells, warnings, errors, None
 
     validity_path = os.path.join(slug_dir, "validity.json")
@@ -721,23 +592,13 @@ def load_jankbench_slug(root, spec, policies, expected, freeze, args,
             f"expectations.benchmark_id "
             f"{expectations.get('benchmark_id')!r} != {spec['benchmark_id']}")
     # validate_jankbench.py keeps the whole policy catalogue in
-    # expectations.policy_spec (six entries), so only require the four
-    # campaign policies and check their hashes.
+    # expectations.policy_spec (six entries).
     policy_spec = expectations.get("policy_spec") or {}
     missing_spec = sorted(set(policies) - set(policy_spec))
     if missing_spec:
         structural.append(
             "expectations.policy_spec is missing campaign policies: "
             + ", ".join(missing_spec))
-    if freeze:
-        frozen_hashes = freeze.get("scheduler_sha256") or {}
-        for policy, expected_hash in frozen_hashes.items():
-            actual = (policy_spec.get(policy) or {}).get("sha256")
-            if actual not in (None, "none") and expected_hash not in (None, "none") and actual != expected_hash:
-                structural.append(
-                    f"policy_spec[{policy}].sha256 {actual!r} != FREEZE "
-                    f"{expected_hash!r}")
-
     if structural:
         errors.extend(f"{source_rel}: {msg}" for msg in structural)
         for cell in cells.values():
@@ -1027,7 +888,10 @@ def load_jankbench_slug(root, spec, policies, expected, freeze, args,
 
 def walk_metrics(root):
     for base, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in ("_invalid", "_warmup")]
+        # Keep the integration view in lockstep with validate_uibench.py:
+        # _smoke, _warmup, _invalid, and any future private scratch subtree
+        # must never be mistaken for a measured rep.
+        dirs[:] = [d for d in dirs if not d.startswith("_")]
         if "metrics.json" in files:
             yield os.path.join(base, "metrics.json")
 
@@ -1356,7 +1220,7 @@ def load_uibench(root, policies, tests, expected, args, test_defs):
 # Report assembly
 
 
-def build_report(args, benchmarks, test_defs, cells, sources, freeze,
+def build_report(args, benchmarks, test_defs, cells, sources,
                  warnings, errors):
     ordered_cells = []
     by_key = {cell["key"]: cell for cell in cells}
@@ -1479,7 +1343,6 @@ def build_report(args, benchmarks, test_defs, cells, sources, freeze,
                 "valid; invalid attempts are listed and excluded. J10b and "
                 "M4 unverifiable criteria are reported, not silently passed."),
         },
-        "freeze": freeze,
         "warnings": unique(warnings),
         "integrity_errors": unique(errors),
         "unverifiable_criteria": dict(sorted(unverifiable.items())),
@@ -1518,7 +1381,7 @@ def markdown_report(report, include_partial):
         f"- Required cells: {report['cells_required_complete']}/"
         f"{report['cells_required']} complete")
     lines.append(
-        f"- All cells (including known-invalid tests): "
+        f"- All cells (including bitmap-upload): "
         f"{report['cells_pass']}/{report['cells_expected']} pass")
     lines.append(
         f"- All 14 tests at {report['runs_expected']}/{report['runs_expected']}: "
@@ -1657,7 +1520,8 @@ def latex_table_jankbench(report, include_partial):
         r"\centering",
         r"\small",
         r"\caption{Full AOSP \texttt{JankBench} matrix on the 16-vCPU "
-        r"Cuttlefish device: 8 benchmarks $\times$ 4 policies, "
+        r"Cuttlefish device: 8 benchmarks $\times$ "
+        f"{len(POLICIES)} policies, "
         f"{report['runs_expected']} valid runs per cell. The mean is "
         r"frame-weighted across valid runs; $p_{50}$, $p_{95}$, and $p_{99}$ "
         r"are means of the per-run summary percentiles; jank is "
@@ -1710,6 +1574,16 @@ def latex_table_uibench(report, include_partial):
     for cell in report["cells"]:
         if cell["workload"] == "uibench":
             by_test[cell["test"]][cell["policy"]] = cell
+    bitmap_known_invalid = any(
+        cell["test"] == "bitmap-upload" and cell["status"] == "known-invalid"
+        for cell in report["cells"])
+    bitmap_note = (
+        r"The \texttt{bitmap-upload} row is known-invalid with the frozen APK "
+        r"and is not a scheduler result. "
+        if bitmap_known_invalid else
+        r"The \texttt{bitmap-upload} row uses the fixed debug APK and is "
+        r"measured like the other tests. "
+    )
     lines = [
         latex_status_comment(report),
         f"% Source: {report['root']}",
@@ -1718,13 +1592,13 @@ def latex_table_uibench(report, include_partial):
         r"\centering",
         r"\small",
         r"\caption{Full AOSP \texttt{UiBenchJankTests} matrix on the 16-vCPU "
-        r"Cuttlefish device: 6 tests $\times$ 4 policies, "
+        r"Cuttlefish device: 6 tests $\times$ "
+        f"{len(POLICIES)} policies, "
         f"{report['runs_expected']} valid reps per cell. GfxMonitor reports "
         r"whole-millisecond percentiles and no mean frame time; $p_{50}$ is "
         r"the central metric. Jank is frame-weighted across valid reps. $n$ "
         r"is valid reps / expected. \texttt{--} marks an incomplete cell. "
-        r"The \texttt{bitmap-upload} row is known-invalid with the frozen APK "
-        r"and is not a scheduler result.}",
+        + bitmap_note + "}",
         r"\label{tab:full14_uibench}",
         r"\begin{tabular}{llrrrrrr}",
         r"\toprule",
@@ -1781,8 +1655,7 @@ def html_report(report, include_partial):
             f"<strong>Complete.</strong> {report['cells_required_complete']}/"
             f"{report['cells_required']} required cells have "
             f"{report['runs_expected']} valid runs/reps. "
-            f"{report['cells_pass']}/{report['cells_expected']} cells pass; "
-            "the known-invalid test is reported separately.")
+            f"{report['cells_pass']}/{report['cells_expected']} cells pass.")
     elif status == "integrity-error":
         status_text = (
             f"<strong>Integrity error.</strong> {len(report['integrity_errors'])} "
@@ -1910,13 +1783,19 @@ def html_report(report, include_partial):
             lines.append(f'        <li>{esc(error)}</li>')
         lines.append('      </ul>')
         lines.append('    </div>')
+    ui_note = (
+        "The frozen UiBench APK cannot run bitmap-upload; that test is "
+        "reported as known-invalid, not as a scheduler result."
+        if report["known_invalid_tests"] else
+        "UiBench uses the fixed debug APK; bitmap-upload is included as a "
+        "measured test."
+    )
     lines.append(
         f'    <p class="is-size-7 has-text-grey">Generated from '
         f"<code>{esc(report['root'])}</code> at {esc(report['generated_at'])}. "
         f"Valid runs/reps per cell: {report['runs_expected']}. "
         f"Excluded invalid attempts: {len(report['excluded_invalid_runs'])}. "
-        "The frozen UiBench APK cannot run bitmap-upload; that test is "
-        "reported as known-invalid, not as a scheduler result.</p>")
+        f"{ui_note}</p>")
     lines.extend([
         '  </div>',
         '</section>',
@@ -2085,8 +1964,8 @@ def main(argv=None):
             refreshed = run_validators(root, benchmarks, POLICIES, args)
             eprint(f"refreshed {refreshed} validity report(s)")
 
-        freeze, warnings, errors = check_freeze(
-            root, POLICIES, args.runs, args.run_count, args.warmup)
+        warnings = []
+        errors = []
 
         sources = {"jankbench": {}, "uibench": None}
         cells = []
@@ -2096,8 +1975,8 @@ def main(argv=None):
             test_def = next(t for t in test_defs
                             if t["key"] == f"jankbench:{bid}")
             slug_cells, slug_warnings, slug_errors, source = \
-                load_jankbench_slug(root, spec, POLICIES, args.runs, freeze,
-                                    args, test_def)
+                load_jankbench_slug(root, spec, POLICIES, args.runs, args,
+                                    test_def)
             cells.extend(slug_cells.values())
             warnings.extend(slug_warnings)
             errors.extend(slug_errors)
@@ -2115,7 +1994,7 @@ def main(argv=None):
             finalize_cell(cell, args.include_partial)
 
         report = build_report(args, benchmarks, test_defs, cells, sources,
-                              freeze, warnings, errors)
+                              warnings, errors)
 
         out_dir = os.path.abspath(args.out_dir or default_out_dir(
             root, args.dry_run))

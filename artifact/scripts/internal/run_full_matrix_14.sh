@@ -18,11 +18,11 @@
 # Usage:
 #   run_full_matrix_14.sh [--out DIR] [--policies a,b,c,d] [--runs 10]
 #                         [--jank-tests 0,1,...] [--ui-tests t1,t2]
-#                         [--skip-jank] [--skip-uibench] [--resume]
+#                         [--skip-jank] [--skip-uibench] [--resume] [--smoke]
 #
 # Everything is written under OUT:
-#   FREEZE.json, scheduler.sha256, policies.txt, orchestrator.log
-#   jankbench/<slug>/{matrix.json,<policy>/run-N/...,_invalid/...}
+#   orchestrator.log
+#   jankbench/<slug>/<policy>/run-N/...,_invalid/...
 #   jankbench/<slug>/validity.json, validity.csv
 #   uibench/{matrix.log,<policy>/block-roundN/...}
 #   uibench/validity.json, validity.csv
@@ -54,10 +54,6 @@ OLD=${OLD:-$BINDIR/scx_fcp_behavioral}
 FCP_BIN=${FCP_BIN:-$BINDIR/scx_fcp}
 LAVD_BIN=${LAVD_BIN:-$BINDIR/scx_lavd}
 P2DQ_BIN=${P2DQ_BIN:-$BINDIR/scx_p2dq}
-EXPECTED_OLD_SHA=""
-EXPECTED_FCP_SHA=""
-EXPECTED_LAVD_SHA=""
-EXPECTED_P2DQ_SHA=""
 BENCH_CFG=$PAPER/scripts/internal/jankbench_benchmarks.json
 WORKLOADS_DIR=${WORKLOADS_DIR:-$ARTIFACT/workloads}
 UI_APK=$WORKLOADS_DIR/UiBench-app-debug.apk
@@ -66,6 +62,7 @@ UI_TEST_APK=$WORKLOADS_DIR/UiBenchJankTests-debug.apk
 SKIP_JANK=0
 SKIP_UI=0
 RESUME=0
+SMOKE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT=$2; shift 2 ;;
@@ -75,11 +72,36 @@ while [ $# -gt 0 ]; do
     --ui-tests) UI_TESTS=$2; shift 2 ;;
     --skip-jank) SKIP_JANK=1; shift ;;
     --skip-uibench) SKIP_UI=1; shift ;;
+    --smoke) SMOKE=1; shift ;;
     --resume) RESUME=1; shift ;;
     -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
 done
+if [ "$PLATFORM" = arm64 ]; then
+  # The 6.1 device path has no ProxyExec; filter it even if the caller passed
+  # the Cuttlefish default policy list explicitly.
+  POLICIES=$(printf '%s' "$POLICIES" | tr ',' '\n' | grep -vx 'eevdf_proxy_exec' | paste -sd, -)
+  [ -n "$POLICIES" ] || { echo "error: no ARM64 policies remain after filtering" >&2; exit 2; }
+fi
+JANKBENCH_VALIDATION_PROFILE=full
+export JANKBENCH_VALIDATION_PROFILE
+if [ "$SMOKE" = 1 ]; then
+  RUNS=1
+  RUN_COUNT=1
+  WARMUP_ITERATIONS=0
+  SKIP_JANK=0
+  SKIP_UI=1
+  RESUME=0
+  JANK_ATTEMPTS=1
+  JANK_TESTS=0
+  JANKBENCH_VALIDATION_PROFILE=smoke
+  export JANKBENCH_VALIDATION_PROFILE
+fi
+if [ "$SMOKE" = 1 ] && [ -e "$OUT" ]; then
+  echo "error: smoke output already exists; choose a new --out path" >&2
+  exit 2
+fi
 
 mkdir -p "$OUT" "$OUT/jankbench" "$OUT/uibench"
 LOG=$OUT/orchestrator.log
@@ -130,11 +152,20 @@ reboot_clean() {
   "${A[@]}" root >/dev/null 2>&1 || true
   sleep 3
   wait_device || die "device did not return after adb root"
-  local deadline=$((SECONDS + 300))
-  until [ "$(sh_ 'getprop sys.boot_completed')" = "1" ]; do
-    [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
-    sleep 3
-  done
+  if [ "$PLATFORM" = arm64 ]; then
+    sleep 30
+    local deadline=$((SECONDS + 300))
+    until [ "$(sh_ 'getprop sys.boot_completed')" = "1" ]; do
+      [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
+      sleep 3
+    done
+  else
+    local deadline=$((SECONDS + 300))
+    until [ "$(sh_ 'getprop sys.boot_completed')" = "1" ]; do
+      [ $SECONDS -ge $deadline ] && die "boot_completed timeout"
+      sleep 3
+    done
+  fi
   ensure_services || die "framework services did not become ready"
   sh_ 'setenforce 0' >/dev/null 2>&1 || true
   [ "$(sh_ 'getenforce')" = "Permissive" ] || die "SELinux is not Permissive"
@@ -144,7 +175,7 @@ reboot_clean() {
   log "back after reboot boot_id=$(sh_ 'cat /proc/sys/kernel/random/boot_id') uptime=$(sh_ "awk '{print \$1}' /proc/uptime")"
 }
 
-freeze() {
+check_inputs() {
   for req_bin in "$OLD" "$FCP_BIN" "$LAVD_BIN" "$P2DQ_BIN"; do
     [ -f "$req_bin" ] || die "missing built scheduler binary $req_bin; run './artifact/pipeline.sh build' first (see artifact/BUILD.md §2)"
   done
@@ -296,10 +327,12 @@ policies = sys.argv[3].split(",")
 bad = []
 for p in policies:
     info = data["summary"]["by_policy"].get(p, {})
-    print(f"{p}\tvalid={info.get('valid_runs', 0)}/{want}\t"
-          f"discovered={info.get('discovered_runs', 0)}\t"
-          f"invalid={info.get('invalid_runs', 0)}")
-    if info.get("valid_runs", 0) < want:
+    valid = info.get('valid_runs', 0)
+    discovered = info.get('discovered_runs', 0)
+    invalid = info.get('invalid_runs', 0)
+    print(f"{p:<32} valid={valid:>2}/{want:<2} "
+          f"discovered={discovered:>2} invalid={invalid:>2}")
+    if valid < want:
         bad.append(p)
 print("ALL_CELLS_VALID" if not bad else "INCOMPLETE " + ",".join(bad))
 raise SystemExit(0 if not bad else 1)
@@ -311,15 +344,6 @@ run_jank_test() {
   slug=$(bench_slug "$bid")
   root=$OUT/jankbench/$slug
   mkdir -p "$root"
-  write_matrix_json "$root" "$bid"
-  # Freeze the JankBench APK hash on the device for the matrix record.
-  sh_ "pm path com.android.benchmark" | sed 's/^package://' | head -1 > "$root/.app_path" || true
-  local ap
-  ap=$(cat "$root/.app_path" 2>/dev/null || true)
-  if [ -n "$ap" ]; then
-    sh_ "sha256sum '$ap'" | awk '{print $1}' > "$OUT/jankbench_app_sha256.txt"
-    write_matrix_json "$root" "$bid"
-  fi
   if [ "$RESUME" = 1 ]; then
     local skip=0
     if [ -d "$root" ] && [ -f "$root/validity.json" ]; then
@@ -341,7 +365,7 @@ run_jank_test() {
     --expected-runs "$RUNS" --run-count "$RUN_COUNT" --benchmark-id "$bid" \
     --policies "$POLICIES" >>"$LOG" 2>&1 || true
   jank_summary "$root" "$bid" | tee -a "$LOG" || true
-  if ! jank_summary "$root" "$bid" >/dev/null 2>&1; then
+  if [ "$SMOKE" != 1 ] && ! jank_summary "$root" "$bid" >/dev/null 2>&1; then
     log "repair pass for $slug"
     reboot_clean
     RUNS=$RUNS RUN_COUNT=$RUN_COUNT JANK_RUN_COUNT=$RUN_COUNT WARMUP_ITERATIONS=$WARMUP_ITERATIONS \
@@ -373,24 +397,31 @@ run_uibench() {
 }
 
 # ---------------------------------------------------------------------------
-log "full 14-test matrix start out=$OUT policies=$POLICIES runs=$RUNS"
+if [ "$SMOKE" = 1 ]; then
+  log "smoke start out=$OUT benchmark_id=$JANK_TESTS policies=$POLICIES runs=1"
+else
+  log "full 14-test matrix start out=$OUT policies=$POLICIES runs=$RUNS"
+fi
 log "host $(uname -r) nproc=$(nproc) load=$(cat /proc/loadavg)"
-freeze
+check_inputs
 wait_device || die "device $SERIAL not reachable"
 "${A[@]}" root >/dev/null 2>&1 || true
 sleep 2
 sh_ 'setenforce 0' >/dev/null 2>&1 || true
 [ "$(sh_ 'getenforce')" = "Permissive" ] || die "SELinux is not Permissive"
-# Push the frozen scheduler under the variant name once; each run re-asserts it.
-"${A[@]}" push "$OLD" /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms >/dev/null || die "push frozen scheduler"
+# Push scheduler binaries for all configured policy phases.
+"${A[@]}" push "$OLD" /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms >/dev/null || die "push variant scheduler"
 "${A[@]}" push "$FCP_BIN" /data/local/tmp/scx/scx_fcp >/dev/null || die "push scx_fcp full scheduler"
 "${A[@]}" push "$LAVD_BIN" /data/local/tmp/scx/scx_lavd >/dev/null || die "push scx_lavd"
 "${A[@]}" push "$P2DQ_BIN" /data/local/tmp/scx/scx_p2dq >/dev/null || die "push scx_p2dq"
 sh_ 'chmod 755 /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' >/dev/null 2>&1 || true
-sh_ 'sha256sum /data/local/tmp/scx/scx_fcp /data/local/tmp/scx/scx_fcp_v_a_depth3_tgid1ms /data/local/tmp/scx/scx_lavd /data/local/tmp/scx/scx_p2dq' > "$OUT/device_bins.sha256"
 
 ensure_guest_proxy_exec() {
   local want=$1 cur feature relaunched=0
+  if [ "$PLATFORM" = arm64 ]; then
+    [ "$want" = 0 ] || die "ProxyExec is unsupported on ARM64 devices"
+    return 0
+  fi
   feature=$(sh_ 'if [ -r /proc/config.gz ]; then zcat /proc/config.gz 2>/dev/null | grep -q "^CONFIG_SCHED_PROXY_EXEC=y" && echo y || echo n; elif [ -r /boot/config-$(uname -r) ]; then grep -q "^CONFIG_SCHED_PROXY_EXEC=y" "/boot/config-$(uname -r)" && echo y || echo n; else echo unknown; fi' || echo unknown)
   if [ "$feature" = "n" ]; then
     # Proxy execution is disabled at compile time. There is no cmdline switch
@@ -480,6 +511,14 @@ if [ "$SKIP_UI" = 0 ]; then
     >>"$LOG" 2>&1 || log "final UiBench validation failed"
 fi
 
+if [ "$SMOKE" = 1 ]; then
+  smoke_slug=$(bench_slug "$JANK_TESTS")
+  if ! jank_summary "$OUT/jankbench/$smoke_slug" "$JANK_TESTS" | tee -a "$LOG"; then
+    die "smoke failed: not every policy has a valid run"
+  fi
+  log "smoke passed: JankBench id=$JANK_TESTS has one valid run per policy"
+  exit 0
+fi
 python3 "$PAPER/scripts/internal/aggregate_full_matrix.py" "$OUT" \
   --policies "$POLICIES" --runs "$RUNS" | tee "$OUT/final_summary.txt"
 agg_rc=${PIPESTATUS[0]}

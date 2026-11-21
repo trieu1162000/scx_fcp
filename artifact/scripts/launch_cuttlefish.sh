@@ -13,19 +13,34 @@
 #   MEMORY_MB      guest RAM in MiB (default: 4096/6144/6144/8192 by CPUS)
 #   SERIAL         adb serial (default 127.0.0.1:6520)
 #   PROXY_EXEC     kernel cmdline sched_proxy_exec=0|1 (default 0; set 1 for EEVDF w/ ProxyExec)
-#   TOPO           host vCPU capacity shaping: asym (default) or sym
+#   TOPO           host vCPU capacity shaping:
+#                    asym = nice-based (legacy)
+#                    dl   = SCHED_DEADLINE-based LITTLE bandwidth cap
+#                    sym  = all vCPUs equal
 #   STOP_EXISTING  stop any existing cvd instance (default 1)
 #   STAGE_DEVICE   push built binaries & install APKs if present (default 1)
-#   BIN_DIR        host directory with built scheduler binaries
-#   WORKLOADS_DIR  host directory with JankBench/UiBench APKs
+#   BIN_DIR        host x86_64 directory with built scheduler binaries
+#   AOSP_OUT       optional AOSP product output directory for APK copies
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ARTIFACT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
-REPO_ROOT=$(cd "$ARTIFACT_DIR/.." && pwd)
 [ -f "$ARTIFACT_DIR/config.env" ] && . "$ARTIFACT_DIR/config.env"
+PLATFORM=${PLATFORM:-x86_64}
+[ "$PLATFORM" = x86_64 ] || {
+  echo "error: launch_cuttlefish.sh requires PLATFORM=x86_64, got $PLATFORM" >&2
+  exit 2
+}
 
 : "${CF_HOME:?set CF_HOME in artifact/config.env or environment}"
+
+for f in boot.img super.img; do
+  [ -f "$CF_HOME/$f" ] || {
+    echo "error: missing Cuttlefish image $CF_HOME/$f" >&2
+    echo "       place the aosp_cf_x86_64_only_phone image files in CF_HOME" >&2
+    exit 2
+  }
+done
 
 CPUS=${CPUS:-16}
 case "$CPUS" in
@@ -36,6 +51,9 @@ case "$CPUS" in
   *) echo "CPUS must be 4, 8, 16, or 32 (got $CPUS)" >&2; exit 2 ;;
 esac
 MEMORY_MB=${MEMORY_MB:-$DEFAULT_MEMORY}
+DL_RUNTIME_NS=${DL_RUNTIME_NS:-892000}
+DL_PERIOD_NS=${DL_PERIOD_NS:-2000000}
+DL_DEADLINE_NS=${DL_DEADLINE_NS:-$DL_PERIOD_NS}
 SERIAL=${SERIAL:-127.0.0.1:6520}
 PROXY_EXEC=${PROXY_EXEC:-0}
 STOP_EXISTING=${STOP_EXISTING:-1}
@@ -52,11 +70,22 @@ fi
   echo "error: adb not found; install adb or set ADB in artifact/config.env" >&2
   exit 1
 }
-BIN_DIR=${BIN_DIR:-"$ARTIFACT_DIR/build/bin"}
-if [ ! -d "$BIN_DIR" ] && [ -d "$REPO_ROOT/build/bin" ]; then
-  BIN_DIR="$REPO_ROOT/build/bin"
+BIN_DIR=${BIN_DIR:-"$ARTIFACT_DIR/build/bin/x86_64"}
+WORKLOADS_DIR=${WORKLOADS_DIR:-"$ARTIFACT_DIR/workloads/x86_64"}
+AOSP_OUT=${AOSP_OUT:-}
+WORKLOAD_APKS=(
+  "$WORKLOADS_DIR/JankBench-platform-signed.apk"
+  "$WORKLOADS_DIR/UiBench-app-debug.apk"
+  "$WORKLOADS_DIR/UiBenchJankTests-debug.apk"
+)
+AOSP_APKS=()
+if [ -n "$AOSP_OUT" ]; then
+  AOSP_APKS=(
+    "$AOSP_OUT/testcases/JankBench/x86_64/JankBench.apk"
+    "$AOSP_OUT/testcases/UiBench/x86_64/UiBench.apk"
+    "$AOSP_OUT/testcases/UiBenchJankTests/x86_64/UiBenchJankTests.apk"
+  )
 fi
-WORKLOADS_DIR=${WORKLOADS_DIR:-"$ARTIFACT_DIR/workloads"}
 REMOTE_DIR=${REMOTE_DIR:-/data/local/tmp/scx}
 LOG="$CF_HOME/launch_a17_${CPUS}vcpu.log"
 
@@ -73,7 +102,7 @@ sh_() {
 
 for dev in /dev/kvm /dev/vhost-vsock /dev/vhost-net /dev/net/tun; do
   if [ ! -e "$dev" ] || ! (exec 3<>"$dev") 2>/dev/null; then
-    echo "error: host virtualization device $dev is missing or inaccessible (ensure KVM, vhost_vsock, and cuttlefish-base are active on the host)" >&2
+    echo "error: $dev unavailable; check KVM, vhost_vsock, cuttlefish-base" >&2
     exit 1
   fi
 done
@@ -109,6 +138,11 @@ for _ in $(seq 1 120); do
   if "$ADB" connect "$SERIAL" >/dev/null 2>&1 &&
      [ "$("$ADB" -s "$SERIAL" get-state 2>/dev/null | tr -d '\r')" = device ]; then
     break
+  fi
+  if grep -q "assemble_cvd failed" "$LOG" 2>/dev/null; then
+    echo "Cuttlefish launch failed; see $LOG" >&2
+    tail -30 "$LOG" >&2 || true
+    exit 1
   fi
   sleep 2
 done
@@ -160,29 +194,99 @@ if [ "$STAGE_DEVICE" = 1 ]; then
     done
     # Also create the legacy alias expected by run_full_matrix_14.sh when scx_fcp_behavioral is present
     if [ -f "$BIN_DIR/scx_fcp_behavioral" ]; then
-      sh_ "cp -f '$REMOTE_DIR/scx_fcp_behavioral' '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms' && chmod 755 '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms'" >/dev/null 2>&1 || true
+      sh_ "cp -f '$REMOTE_DIR/scx_fcp_behavioral' '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms' && \
+        chmod 755 '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms'" >/dev/null 2>&1 || true
     fi
   fi
-  if [ -d "$WORKLOADS_DIR" ]; then
-    for apk in "$WORKLOADS_DIR"/*.apk; do
-      [ -f "$apk" ] || continue
-      "$ADB" -s "$SERIAL" install -r -g "$apk" >/dev/null 2>&1 && \
-        echo "installed workload APK: $(basename "$apk")" || \
-        echo "warning: could not install $(basename "$apk")" >&2
+  mkdir -p "$WORKLOADS_DIR"
+  if [ -n "$AOSP_OUT" ]; then
+    for i in "${!AOSP_APKS[@]}"; do
+      if [ -f "${AOSP_APKS[$i]}" ]; then
+        cp -f "${AOSP_APKS[$i]}" "${WORKLOAD_APKS[$i]}"
+        echo "copied AOSP workload APK: ${WORKLOAD_APKS[$i]}"
+      else
+        echo "warning: missing AOSP APK ${AOSP_APKS[$i]}" >&2
+      fi
     done
   fi
+  for apk in "${WORKLOAD_APKS[@]}"; do
+    if [ ! -f "$apk" ]; then
+      echo "warning: missing workload APK $apk; set AOSP_OUT or copy APKs into $WORKLOADS_DIR" >&2
+      continue
+    fi
+    "$ADB" -s "$SERIAL" install -r -g -t --bypass-low-target-sdk-block "$apk" >/dev/null 2>&1 && \
+      echo "installed workload APK: $(basename "$apk")" || \
+      echo "warning: could not install $(basename "$apk")" >&2
+  done
 fi
 
-# 5. Apply optional host vCPU capacity shaping (TOPO=asym sets nice +10 on LITTLE half 0..CPUS/2-1)
+# 5. Apply optional host vCPU capacity shaping.
+#    asym = legacy nice+10 on LITTLE half 0..CPUS/2-1.
+#    dl   = SCHED_DEADLINE bandwidth cap on LITTLE half and nice -10 on the
+#           remaining vCPUs. 892us / 2000us = 44.6%, matching the 446/1024
+#           asymmetric capacity ratio. This is a host-side emulation, not a
+#           hardware model; record the chosen mode in every result manifest.
 TOPO=${TOPO:-asym}
 HALF=$((CPUS / 2))
-for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk '/crosvm_vcpu/ {print $1}'); do
-  renice -n 0 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 0 -p "$tid" >/dev/null 2>&1 || true
+
+# crosvm's vCPU threads have comm names such as crosvm_vcpu0, so
+# `ps -C crosvm` does not select them. Identify the Android crosvm instance
+# (the one with --cpus) and address its threads by PID.
+CROSVM_PID=""
+for _pid in $(pgrep -x crosvm 2>/dev/null); do
+  if tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null | grep -q -- '--cpus='; then
+    CROSVM_PID=$_pid
+    break
+  fi
 done
+
+all_vcpu_tids() {
+  [ -n "$CROSVM_PID" ] || return 1
+  /bin/ps -L -p "$CROSVM_PID" -o tid=,comm= 2>/dev/null |
+    awk '/crosvm_vcpu/ {print $1}'
+}
+
+reset_vcpu_sched() {
+  for tid in $(all_vcpu_tids); do
+    chrt -o --pid 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o --pid 0 "$tid" >/dev/null 2>&1 || true
+    renice -n 0 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 0 -p "$tid" >/dev/null 2>&1 || true
+  done
+}
+
+vcpu_tid() {
+  [ -n "$CROSVM_PID" ] || return 1
+  /bin/ps -L -p "$CROSVM_PID" -o tid=,comm= 2>/dev/null |
+    awk -v c="crosvm_vcpu$1" '$2 == c {print $1}'
+}
+
+set_deadline_vcpu() {
+  local tid=$1
+  chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" --pid 0 "$tid" >/dev/null 2>&1 || \
+    sudo -n chrt -d -T "$DL_RUNTIME_NS" -P "$DL_PERIOD_NS" -D "$DL_DEADLINE_NS" --pid 0 "$tid" >/dev/null 2>&1 || {
+      echo "warning: could not set SCHED_DEADLINE on crosvm tid $tid (need CAP_SYS_NICE/root)" >&2
+      return 1
+    }
+}
+
+reset_vcpu_sched
 if [ "$TOPO" = "asym" ]; then
   for v in $(seq 0 $((HALF - 1))); do
-    for tid in $(/bin/ps -L -o tid=,comm= -C crosvm 2>/dev/null | awk -v c="crosvm_vcpu$v" '$2 == c {print $1}'); do
+    for tid in $(vcpu_tid "$v"); do
       renice -n 10 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n 10 -p "$tid" >/dev/null 2>&1 || true
+    done
+  done
+elif [ "$TOPO" = "dl" ]; then
+  # LITTLE half: hard 44.6% bandwidth cap.
+  for v in $(seq 0 $((HALF - 1))); do
+    for tid in $(vcpu_tid "$v"); do
+      set_deadline_vcpu "$tid" || true
+    done
+  done
+  # big half: prefer these vCPUs with a negative nice value.
+  for v in $(seq "$HALF" $((CPUS - 1))); do
+    for tid in $(vcpu_tid "$v"); do
+      chrt -o --pid 0 "$tid" >/dev/null 2>&1 || sudo -n chrt -o --pid 0 "$tid" >/dev/null 2>&1 || true
+      renice -n -10 -p "$tid" >/dev/null 2>&1 || sudo -n renice -n -10 -p "$tid" >/dev/null 2>&1 || true
     done
   done
 fi

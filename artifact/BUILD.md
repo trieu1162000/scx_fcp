@@ -54,6 +54,19 @@ To invoke `build_static.sh` directly:
 ./scripts/build_static.sh
 ```
 
+### SA8155P / SCX 6.1 ARM64
+
+Build from the existing SCX 6.1 workspace and historical cross-compiled static archives:
+
+```bash
+source artifact/sa8155.env
+./artifact/pipeline.sh build
+```
+
+`ARM64_LIBS` defaults to `$HOME/opt/arm64-libs`. Install host packages `gcc-aarch64-linux-gnu` and `libc6-dev-arm64-cross` for the cross linker and sysroot. The build requires `libelf.a`, `libz.a`, and `libzstd.a` under `$ARM64_LIBS/lib`; it adds that directory to the Rust linker search path and links `libzstd.a`. Do not install host `libelf-dev:arm64` just for this build.
+
+The default ARM64 build stages `scx_fcp`, `scx_fcp_behavioral`, `scx_lavd`, and `scx_p2dq` in `artifact/build/bin/arm64/`. Device uses `scx_fcp_behavioral` for `scx_fcp_v_a_depth3_tgid1ms` and runs `scx_p2dq` with PELT disabled for `scx_p2dq_pelt_off`. It builds the baseline packages `scx_lavd_k61` and `scx_p2dq_k61`; set `BUILD_BASELINES=0` to skip them.
+
 ## 3. JankBench APK (`com.android.benchmark`)
 
 `JankBench` (`frameworks/base/tests/JankBench`) is an intent-driven app that runs all 8 UI benchmarks (`BM_ID=0,1,2,3,4,5,6,7`):

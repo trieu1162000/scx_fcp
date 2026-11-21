@@ -79,7 +79,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PAPER=$(cd "$HERE/../.." && pwd)
 [ -f "$PAPER/config.env" ] && . "$PAPER/config.env"
 OUTROOT=${OUTROOT:-$PAPER/results/uibench_stable}
-APKDIR=${APKDIR:-$PAPER/workloads}
+APKDIR=${APKDIR:-${WORKLOADS_DIR:-$PAPER/workloads}}
 
 APP_APK=${UI_APP_APK:-$APKDIR/UiBench-app-debug.apk}
 TEST_APK=${UI_TEST_APK:-$APKDIR/UiBenchJankTests-debug.apk}
@@ -88,6 +88,10 @@ TEST_APK=${UI_TEST_APK:-$APKDIR/UiBenchJankTests-debug.apk}
 
 A=("$ADB" -s "$SERIAL")
 "${A[@]}" get-state >/dev/null 2>&1 || { echo "device $SERIAL not reachable" >&2; exit 1; }
+ANDROID_USER=$("${A[@]}" shell am get-current-user 2>/dev/null | tr -d '\r')
+case "$ANDROID_USER" in
+  ''|*[!0-9]*) echo "could not determine current Android user" >&2; exit 1 ;;
+esac
 
 KERNEL=$("${A[@]}" shell uname -r | tr -d '\r')
 VCPU=$("${A[@]}" shell nproc | tr -d '\r')
@@ -115,9 +119,12 @@ case "$POLICY" in
 esac
 
 KMAJOR=$(echo "$KERNEL" | grep -oE '^[0-9]+\.[0-9]+' || echo unknown)
-PLATFORM="cf-${KMAJOR}-${VCPU}vcpu"
+PLATFORM=${PLATFORM:-x86_64}
+# Keep the historical directory label, but do not overwrite PLATFORM: the
+# arm64-specific UI settling and the manifest depend on it.
+RUN_TAG="cf-${KMAJOR}-${VCPU}vcpu"
 DATE=$(date +%F)
-RUNDIR=$OUTROOT/$DATE/$PLATFORM/$POLICY/uibench/run-$(printf '%02d' "$RUN")
+RUNDIR=$OUTROOT/$DATE/$RUN_TAG/$POLICY/uibench/run-$(printf '%02d' "$RUN")
 mkdir -p "$RUNDIR"
 
 echo "device   $SERIAL"
@@ -191,7 +198,7 @@ install_apks() {
       echo "install failed for $APP_APK" >&2; cat "$RUNDIR/install_app.txt" >&2; exit 1
     fi
   fi
-  "${A[@]}" install -r -g "$TEST_APK" > "$RUNDIR/install_test.txt" 2>&1 || {
+  "${A[@]}" install -r -t -g --bypass-low-target-sdk-block "$TEST_APK" > "$RUNDIR/install_test.txt" 2>&1 || {
     echo "install failed for $TEST_APK" >&2; cat "$RUNDIR/install_test.txt" >&2; exit 1; }
 }
 
@@ -216,7 +223,7 @@ wait_ui_stable() {
   # The image can restart SystemUI once after boot.  The matrix driver performs
   # the long post-boot wait; this per-invocation check is short.
   local deadline=$((SECONDS + 60))
-  local last_pid="" stable=0 pid top kg
+  local last_pid="" stable=0 pid top kg boot
   while [ $SECONDS -lt $deadline ]; do
     ensure_awake >/dev/null 2>&1 || true
     pid=$(systemui_pid)
@@ -227,12 +234,20 @@ wait_ui_stable() {
     else
       stable=0; last_pid=$pid
     fi
-    if [ -n "$pid" ] && [ "$stable" -ge 6 ] &&
-       printf '%s' "$top" | grep -q 'launcher3' &&
-       printf '%s' "$kg" | grep -q 'KeyguardShowing=false'; then
+    if [ "${PLATFORM:-}" = arm64 ]; then
+      boot=$(sh_ 'getprop sys.boot_completed' | tr -d '\r')
+      if [ "$boot" = "1" ] && [ -n "$pid" ] && [ "$stable" -ge 6 ] &&
+         printf '%s' "$kg" | grep -q 'KeyguardShowing=false'; then
+        return 0
+      fi
+    elif [ -n "$pid" ] && [ "$stable" -ge 6 ] &&
+         printf '%s' "$top" | grep -q 'launcher3' &&
+         printf '%s' "$kg" | grep -q 'KeyguardShowing=false'; then
       return 0
     fi
-    ensure_home >/dev/null 2>&1 || true
+    if [ "${PLATFORM:-}" != arm64 ]; then
+      ensure_home >/dev/null 2>&1 || true
+    fi
     sleep 2
   done
   echo "WARNING UI did not settle (systemui=${last_pid:-none} top=${top:-?})" >&2
@@ -284,6 +299,15 @@ PY
 
 # ---------------------------------------------------------------------------
 
+# A policy label is not evidence: refuse to record the ProxyExec baseline on a
+# kernel whose cmdline did not actually enable it.
+if [ "$POLICY" = "eevdf_proxy_exec" ]; then
+  sh_ 'cat /proc/cmdline' | tr -d '\r' | grep -q 'sched_proxy_exec=1' || {
+    echo "eevdf_proxy_exec requested but guest cmdline lacks sched_proxy_exec=1" >&2
+    exit 1
+  }
+fi
+
 if [ "$INSTALL" = 1 ]; then
   install_apks
 fi
@@ -329,8 +353,8 @@ for rep in $(seq 1 "$REPEATS"); do
 
     echo "run $short $class#$method rep $rep"
     ensure_awake >/dev/null 2>&1 || true
-    "${A[@]}" shell am force-stop "$APP_PKG" >/dev/null 2>&1 || true
-    "${A[@]}" shell am force-stop "$TEST_PKG" >/dev/null 2>&1 || true
+    "${A[@]}" shell am force-stop --user "$ANDROID_USER" "$APP_PKG" >/dev/null 2>&1 || true
+    "${A[@]}" shell am force-stop --user "$ANDROID_USER" "$TEST_PKG" >/dev/null 2>&1 || true
     sleep 1
     "${A[@]}" shell "dumpsys gfxinfo $APP_PKG reset" > "$td/gfxinfo_reset.txt" 2>&1 || true
     "${A[@]}" logcat -c >/dev/null 2>&1 || true
@@ -338,7 +362,7 @@ for rep in $(seq 1 "$REPEATS"); do
     SYS_BEFORE=$(systemui_pid)
     T_START=$(date +%s)
     set +e
-    "${A[@]}" shell "am instrument -w -r -e class '$class#$method' -e iterations $ITERATIONS '$RUNNER'" > "$td/instrument.txt" 2>&1
+    "${A[@]}" shell "am instrument --user $ANDROID_USER -w -r -e class '$class#$method' -e iterations $ITERATIONS '$RUNNER'" > "$td/instrument.txt" 2>&1
     rc=$?
     set -e
     echo "$rc" > "$td/exit_code.txt"
@@ -354,8 +378,6 @@ END=$(date -Iseconds)
 "${A[@]}" shell "cat /sys/kernel/sched_ext/state 2>/dev/null" | tr -d '\r' > "$RUNDIR/state_after.txt" 2>/dev/null || true
 "${A[@]}" shell "cat /sys/kernel/sched_ext/root/ops 2>/dev/null" | tr -d '\r' >> "$RUNDIR/state_after.txt" 2>/dev/null || true
 
-APP_SHA=$(sha256sum "$APP_APK" | awk '{print $1}')
-TEST_SHA=$(sha256sum "$TEST_APK" | awk '{print $1}')
 HOST_KERNEL=$(uname -r)
 HOST_NPROC=$(nproc)
 HOST_MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
@@ -383,9 +405,7 @@ manifest = {
   "app_package": "$APP_PKG",
   "test_package": "$TEST_PKG",
   "app_apk": "$APP_APK",
-  "app_sha256": "$APP_SHA",
   "test_apk": "$TEST_APK",
-  "test_sha256": "$TEST_SHA",
   "host_kernel": "$HOST_KERNEL",
   "host_nproc": $HOST_NPROC,
   "host_mem_total_mb": $HOST_MEM_MB,

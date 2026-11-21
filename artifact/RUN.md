@@ -2,7 +2,7 @@
 
 ## Quick start
 
-Configure [`artifact/config.env`](config.env) once (`SCX_ROOT`, `CF_HOME`, `SERIAL`, `CPUS`), place the workload APKs in `artifact/workloads/`, and run:
+Configure [`artifact/config.env`](config.env) once (`SCX_ROOT`, `CF_HOME`, `SERIAL`, `CPUS`), place the workload APKs in `artifact/workloads/` (or `artifact/workloads/arm64/` for the physical device), and run:
 
 ```bash
 ./artifact/pipeline.sh build
@@ -13,13 +13,44 @@ Configure [`artifact/config.env`](config.env) once (`SCX_ROOT`, `CF_HOME`, `SERI
   --out-dir artifact/results/full14/integration
 ```
 
+### Physical SA8155P / SCX 6.1
+
+Use the full matrix for all 8 JankBench IDs and 6 UiBench tests, with 10 runs/reps per policy. The device policy set excludes ProxyExec.
+
+```bash
+source artifact/sa8155.env
+./artifact/pipeline.sh build
+OUT="$PWD/artifact/results/full14_sa8155_$(date +%Y%m%d-%H%M%S)"
+./artifact/pipeline.sh full --out "$OUT"
+```
+On ARM64, each full-matrix reboot waits 60 seconds, then requires `sys.boot_completed=1` and framework services. It does not require a specific launcher package or wait for host/device load to settle; those load waits and the JankBench J10a load gate apply only to Cuttlefish.
+
+Resume only if the full run is interrupted:
+
+```bash
+./artifact/pipeline.sh resume --out "$OUT"
+```
+The smoke summary reports each policy's sched_ext state, ops name, frame count, and scheduler log path.
+
+Integrate the completed results:
+
+```bash
+./artifact/pipeline.sh analyze "$OUT"
+```
+
+`full` stages binaries and APKs, then reboots between test blocks. It uses `eevdf`, `scx_fcp`, `scx_fcp_v_a_depth3_tgid1ms`, `scx_p2dq_pelt_off`, and `scx_lavd`. The UiBench APK must be the fixed build; the device profile requires all six tests to pass.
+
+Device launch sets SELinux to Permissive; restore it with `adb -s "$SERIAL" shell setenforce 1` or reboot.
+
 ## Overview
 
-This document covers launching Android Cuttlefish across **4, 8, 16, and 32 vCPUs** (`Symmetric` and `Asymmetric` `446:1024` topologies) and running:
+The Cuttlefish campaign covers **4, 8, 16, and 32 vCPUs** (`Symmetric` and `Asymmetric` `446:1024` topologies) and runs:
 1. the 10-run multi-core scaling evaluation on `fcp_frame_bench` (Table 1);
 2. the full 8-benchmark AOSP `JankBench` suite (`BM_ID=0,1,2,3,4,5,6,7`, Table 2);
 3. the full 6-benchmark AOSP `UiBenchJankTests` suite (6 tests; `bitmap-upload`
    needs the fixed APK, otherwise it is reported as known-invalid, Table 3).
+
+The SA8155P full matrix uses the device's fixed 8-core configuration; it does not run Cuttlefish vCPU scaling or ProxyExec.
 
 The public entrypoint is `artifact/pipeline.sh`:
 
@@ -78,20 +109,28 @@ device ready: 127.0.0.1:6520
 
 ## 3. Smoke test
 
-Run the smallest useful cell first:
+Run JankBench benchmark id 0 once for every configured policy, with one iteration
+and no warm-up:
 
 ```bash
-./artifact/pipeline.sh smoke
+OUT=$PWD/artifact/results/smoke_$(date +%Y%m%d-%H%M%S)
+./artifact/pipeline.sh smoke --out "$OUT"
 ```
 
-Check:
+Smoke makes one attempt per policy. Its smoke validation profile requires a
+non-empty result for the single iteration and keeps the scheduler, state,
+process, crash, boot, load, and BPF checks. It relaxes campaign frame-count and
+minimum-duration gates, so smoke validity does not qualify a campaign run.
+UiBench and full-matrix aggregation are skipped.
+
+Inspect the validity record and run summary:
 
 ```bash
-cat artifact/results/smoke/full_matrix_status.json
-cat artifact/results/smoke/jankbench/list-view-fling/validity.json
+cat "$OUT/jankbench/list-view-fling/validity.json"
+grep -E 'ALL_CELLS_VALID|INCOMPLETE|smoke passed|FATAL' "$OUT/orchestrator.log"
 ```
 
-Do not start the full campaign until this cell is valid.
+Run the full campaign only after smoke passes.
 
 ## 4. Multi-core scaling benchmark (`fcp_frame_bench`, 4 / 8 / 16 / 32 vCPUs, 10 Runs)
 
@@ -127,7 +166,7 @@ OUT=$PWD/artifact/results/full14_$(date +%Y%m%d-%H%M%S)
 Defaults:
 
 ```text
-policies:  eevdf, eevdf w/ proxy_exec, scx_fcp, scx_fcp_behavioral, scx_p2dq_pelt_off, scx_lavd
+policies:  eevdf, eevdf w/ proxy_exec, scx_fcp, scx_fcp_v_a_depth3_tgid1ms (behavioral), scx_p2dq_pelt_off, scx_lavd
 JankBench: all 8 benchmark IDs (0,1,2,3,4,5,6,7)
 UiBench:   all 6 tests (bitmap-upload, shadow-grid-list, inflating-list,
            slow-bind-recycler, trivial-recycler, layout-cache-low)
@@ -151,10 +190,13 @@ validity records to make an incomplete cell look complete.
 
 ### What invalid means
 
-JankBench is rejected on any failed evaluable J1–J12 check: wrong state/ops,
+JankBench is rejected on any failed evaluable J1–J11 check: wrong state/ops,
 missing database, wrong iteration set, frame-count floor, host
 or guest load gate, process changes, sleep events, logcat crash/ANR, or boot
 change.
+On Cuttlefish, the host load wait and JankBench J10a limit default to 25% of
+host CPUs (16 when `nproc` is 64). The guest load limit remains 2.0.
+JankBench manifests record the host CPU count and effective host limit.
 
 UiBench is rejected when any required test/rep row is invalid: instrumentation
 failure, missing GfxMonitor summary, too few frames, missing percentile/jank
@@ -212,4 +254,4 @@ HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd"
   is applied.
 - Windows-side CPU/crosvm monitoring is not joined to the run; `J10b` is
   reported as unverifiable, not silently passed.
-- The physical SA8155P board is outside this artifact.
+- The physical SA8155P path supports SCX 6.1 build, device preparation, a single-ID JankBench smoke test, and the 14-test matrix; the multi-core vCPU scaling campaign remains Cuttlefish-only.

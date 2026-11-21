@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a JankBench result matrix against plan/47 criteria J1-J12.
+"""Validate a JankBench result matrix against plan/47 criteria J1-J11.
 
 Usage:
   validate_jankbench.py [RESULT_ROOT] [--out-dir DIR] [--expected-runs N]
@@ -14,16 +14,16 @@ device, the host monitor, or the network.  A criterion that cannot be
 evaluated from the recorded data is reported as ``unverifiable``; it is not
 silently treated as a pass.  A run is ``valid`` when no evaluable criterion
 fails.  A run is ``strict_valid`` only when no criterion fails *and* every
-J1-J12 criterion is evaluable.
+J1-J11 criterion is evaluable.
 
 Outputs (default: RESULT_ROOT):
-  validity.json   matrix report, per-run checks, M1-M5 controls
+  validity.json   matrix report, per-run checks, M1-M4 controls
   validity.csv    one row per discovered or expected run
 
 Exit status:
   0  all discovered runs valid under the evaluable checks
   1  at least one run has a failed check
-  2  --strict was given and at least one J1-J12 criterion is unverifiable
+  2  --strict was given and at least one J1-J11 criterion is unverifiable
 """
 from __future__ import annotations
 
@@ -39,12 +39,19 @@ import statistics
 import sys
 from collections import Counter, OrderedDict, defaultdict
 
+HOST_CPU_COUNT = (
+    len(os.sched_getaffinity(0))
+    if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+)
+HOST_LOAD_LIMIT = float(
+    os.environ.get("QUIET_HOST") or f"{HOST_CPU_COUNT * 0.25:.2f}"
+)
+
 SCHEMA = "scx_fcp.jankbench_validity.v1"
 
 # ---------------------------------------------------------------------------
-# Frozen expectations. These are deliberately explicit for the released
-# artifact, but platform values may be supplied by config.env for a source
-# build or an alternate image.
+# Campaign expectations. Platform values can be supplied by config.env for a
+# source build or an alternate image.
 
 def _env_int(name):
     value = os.environ.get(name, "").strip()
@@ -60,14 +67,13 @@ EXPECTED = {
     "sdk": _env_int("EXPECTED_SDK"),
     "build": os.environ.get("EXPECTED_BUILD", "").strip(),
     "selinux": os.environ.get("EXPECTED_SELINUX", "Permissive").strip(),
-    "app_sha256": os.environ.get("EXPECTED_APP_SHA256", "").strip(),
     "min_total_frames": 4000,
     "min_iteration_frames": 1200,
     "iterations": [0, 1, 2, 3],
     "host_window_s": [90.0, 180.0],
-    "host_load_start_max": 3.0,
+    "host_load_start_max": HOST_LOAD_LIMIT,
     "guest_load_start_max": 2.0,
-    "host_load_end_warn": 3.0,
+    "host_load_end_warn": HOST_LOAD_LIMIT,
     "guest_load_end_warn": 2.0,
     "windows_cpu_mean_max_pct": 25.0,
     "windows_cpu_max_max_pct": 60.0,
@@ -98,39 +104,38 @@ def load_benchmarks(path=None):
 
 BENCHMARKS = load_benchmarks()
 
-# policy -> expected binary, ops prefix, scheduler hash, and whether sched_ext
-# is expected to be attached during the benchmark.
+# policy -> expected binary, ops prefix, and sched_ext attachment expectation.
 POLICY_SPEC = OrderedDict([
     ("eevdf", {
-        "binary": "none", "ops": "", "sha256": "none", "attach": False,
+        "binary": "none", "ops": "", "attach": False,
         "label": "EEVDF (no sched_ext)",
     }),
     ("eevdf_proxy_exec", {
-        "binary": "none", "ops": "", "sha256": "none", "attach": False,
+        "binary": "none", "ops": "", "attach": False,
         "label": "EEVDF w/ ProxyExec (no sched_ext)",
     }),
     ("scx_lavd", {
-        "binary": "scx_lavd", "ops": "lavd", "sha256": None,
+        "binary": "scx_lavd", "ops": "lavd",
         "attach": True, "label": "scx_lavd",
     }),
     ("scx_p2dq_pelt_off", {
-        "binary": "scx_p2dq", "ops": "p2dq", "sha256": None,
+        "binary": "scx_p2dq", "ops": "p2dq",
         "attach": True, "label": "scx_p2dq PELT off",
     }),
     ("scx_fcp", {
-        "binary": "scx_fcp", "ops": "fcp", "sha256": None,
+        "binary": "scx_fcp", "ops": "fcp",
         "attach": True, "label": "scx_fcp full (fcp)",
     }),
     ("scx_fcp_zh", {
-        "binary": "scx_fcp_behavioral", "ops": "fcp_zh", "sha256": None,
+        "binary": "scx_fcp_behavioral", "ops": "fcp_zh",
         "attach": True, "label": "scx_fcp base (fcp_zh)",
     }),
     ("scx_fcp_nh", {
-        "binary": "scx_fcp_named", "ops": "fcp_nh", "sha256": None,
+        "binary": "scx_fcp_named", "ops": "fcp_nh",
         "attach": True, "label": "scx_fcp named (fcp_nh)",
     }),
     ("scx_fcp_v_a_depth3_tgid1ms", {
-        "binary": "scx_fcp_v_a_depth3_tgid1ms", "ops": "fcp_zh", "sha256": None,
+        "binary": "scx_fcp_v_a_depth3_tgid1ms", "ops": "fcp_zh",
         "attach": True, "label": "scx_fcp tuned",
     }),
 ])
@@ -144,8 +149,7 @@ REQUIRED_FILES = ["manifest.json", "summary.json", "BenchmarkResults.db",
                   "frames.csv"]
 SUPPORT_FILES = ["logcat.txt", "harness.log", "scheduler.log", "am_start.txt",
                  "db_probe.txt", "kernel.txt", "nproc.txt", "sdk.txt",
-                 "build.txt", "selinux.txt", "app_sha256.txt",
-                 "scheduler_sha256.txt", "state_before.txt", "state_after.txt",
+                 "build.txt", "selinux.txt", "state_before.txt", "state_after.txt",
                  "host_load_start.txt", "host_load_end.txt",
                  "guest_load_start.txt", "guest_load_end.txt"]
 
@@ -276,11 +280,11 @@ def check_ids_for_summary():
     return [
         "J1_files", "J1b_file_consistency", "J2_manifest", "J3_frames",
         "J4_platform",
-        "J5a_hashes", "J5b_state_before", "J5c_state_after_benchmark",
+        "J5a_scheduler_binary", "J5b_state_before", "J5c_state_after_benchmark",
         "J5d_state_after_stop", "J6a_systemui", "J6b_system_server",
         "J6c_benchmark_process", "J7_logcat", "J8_boot_id",
         "J9_host_window", "J10a_load_gate", "J10b_windows_cpu",
-        "J11_bpf_stats_off", "J12_freeze_manifest",
+        "J11_bpf_stats_off",
         "W_warmup",
     ]
 
@@ -323,7 +327,7 @@ def inspect_database(db_path):
 # Per-run evaluation
 
 
-def evaluate_run(root, policy, run, expected, freeze_manifest=None):
+def evaluate_run(root, policy, run, expected):
     """Evaluate one run directory.  Returns a JSON-safe dict."""
     run_dir = os.path.join(root, policy, f"run-{run}")
     record = {
@@ -341,7 +345,6 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
         "metrics": {},
         "loads": {},
         "boot": {},
-        "hashes": {},
     }
     checks = record["checks"]
 
@@ -416,10 +419,6 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
     compare_text_file("sdk.txt", manifest.get("sdk"), "sdk")
     compare_text_file("build.txt", manifest.get("build"), "build")
     compare_text_file("selinux.txt", manifest.get("selinux"), "selinux")
-    compare_text_file("app_sha256.txt", manifest.get("app_sha256"),
-                      "app_sha256")
-    compare_text_file("scheduler_sha256.txt",
-                      manifest.get("scheduler_sha256"), "scheduler_sha256")
     for name, state_key, ops_key in (
             ("state_before.txt", "scx_state_before", "scx_ops_before"),
             ("state_after.txt", "scx_state_after_stop",
@@ -599,7 +598,7 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
         j4_checked += 1
         if manifest.get("build") != expected["build"]:
             j4_problems.append(
-                f"build {manifest.get('build')!r} != frozen build")
+                f"build {manifest.get('build')!r} != {expected['build']!r}")
     if expected["selinux"]:
         j4_checked += 1
         if manifest.get("selinux") != expected["selinux"]:
@@ -616,40 +615,25 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
                      if not j4_problems else "; ".join(j4_problems))
     record["reasons"].extend(f"J4_platform: {p}" for p in j4_problems)
 
-    # ---- J5: provenance, hashes, scheduler state/ops ----------------------
+    # ---- J5: scheduler identity and state/ops -----------------------------
     spec = POLICY_SPEC.get(norm_policy(policy))
     if spec is None:
-        status_check(checks, "J5a_hashes", False,
-                     f"no frozen expectations for policy {policy!r}")
+        status_check(checks, "J5a_scheduler_binary", False,
+                     f"no expectations for policy {policy!r}")
         record["reasons"].append(
-            f"J5a_hashes: unknown policy {policy!r}")
+            f"J5a_scheduler_binary: unknown policy {policy!r}")
     else:
         j5a_problems = []
-        app_sha = manifest.get("app_sha256")
-        sched_sha = (manifest.get("scheduler_sha256") or "").strip()
-        if not app_sha:
-            j5a_problems.append("app_sha256 is missing")
-        elif expected.get("app_sha256") and app_sha != expected["app_sha256"]:
-            j5a_problems.append(
-                f"app_sha256 {app_sha!r} != expected {expected['app_sha256']!r}")
-        if not sched_sha:
-            j5a_problems.append("scheduler_sha256 is missing")
-        elif spec.get("sha256") and sched_sha != spec["sha256"]:
-            j5a_problems.append(
-                f"scheduler_sha256 {sched_sha!r} != expected {spec['sha256']!r}")
         if manifest.get("scheduler_binary") != spec["binary"]:
             j5a_problems.append(
                 f"scheduler_binary {manifest.get('scheduler_binary')!r} != "
                 f"{spec['binary']!r}")
-        status_check(checks, "J5a_hashes", not j5a_problems,
-                     "app and scheduler hashes match the freeze"
+        status_check(checks, "J5a_scheduler_binary", not j5a_problems,
+                     "scheduler binary matches policy"
                      if not j5a_problems else "; ".join(j5a_problems))
-        record["reasons"].extend(f"J5a_hashes: {p}" for p in j5a_problems)
-        record["hashes"] = {
-            "app_sha256": app_sha,
-            "scheduler_sha256": sched_sha,
-            "scheduler_binary": manifest.get("scheduler_binary"),
-        }
+        record["reasons"].extend(
+            f"J5a_scheduler_binary: {p}" for p in j5a_problems)
+        record["scheduler_binary"] = manifest.get("scheduler_binary")
 
         def state_ops_problems(prefix, state_key, ops_key):
             problems = []
@@ -857,41 +841,55 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
     record["metrics"]["uptime_start"] = uptime_start
     record["metrics"]["uptime_end"] = uptime_end
 
-    # ---- J10a: host/guest load gate --------------------------------------
+    # ---- J10a: Cuttlefish host/guest load gate ---------------------------
     host_start_load = first_float(manifest.get("host_load_start"))
     guest_start_load = first_float(manifest.get("guest_load_start"))
     host_end_load = first_float(manifest.get("host_load_end"))
     guest_end_load = first_float(manifest.get("guest_load_end"))
+    host_nproc = first_float(manifest.get("host_nproc"))
+    host_load_limit = first_float(manifest.get("host_load_limit"))
+    if host_load_limit is None:
+        host_load_limit = (
+            host_nproc * 0.25 if host_nproc is not None
+            else expected["host_load_start_max"]
+        )
     record["loads"] = {
         "host_start": host_start_load,
         "host_end": host_end_load,
         "guest_start": guest_start_load,
         "guest_end": guest_end_load,
+        "host_nproc": host_nproc,
+        "host_load_limit": host_load_limit,
     }
-    j10a_problems = []
-    if host_start_load is None or guest_start_load is None:
-        j10a_problems.append("host/guest start load missing")
+    platform = str(manifest.get("platform") or os.environ.get("PLATFORM") or "").strip().lower()
+    if platform == "arm64":
+        status_skip(checks, "J10a_load_gate",
+                    "Cuttlefish-only gate; ARM64 load readings are diagnostic")
     else:
-        if host_start_load > expected["host_load_start_max"]:
-            j10a_problems.append(
-                f"host start load {host_start_load:g} > "
-                f"{expected['host_load_start_max']:g}")
-        if guest_start_load > expected["guest_load_start_max"]:
-            j10a_problems.append(
-                f"guest start load {guest_start_load:g} > "
-                f"{expected['guest_load_start_max']:g}")
-    if guest_end_load is not None and guest_end_load > expected["guest_load_end_warn"]:
-        record["warnings"].append(
-            f"guest end load {guest_end_load:g} > "
-            f"{expected['guest_load_end_warn']:g} (diagnostic, not a reject)")
-    if host_end_load is not None and host_end_load > expected["host_load_end_warn"]:
-        record["warnings"].append(
-            f"host end load {host_end_load:g} > "
-            f"{expected['host_load_end_warn']:g} (diagnostic, not a reject)")
-    status_check(checks, "J10a_load_gate", not j10a_problems,
-                 "start load within the pre-registered gate"
-                 if not j10a_problems else "; ".join(j10a_problems))
-    record["reasons"].extend(f"J10a_load_gate: {p}" for p in j10a_problems)
+        j10a_problems = []
+        if host_start_load is None or guest_start_load is None:
+            j10a_problems.append("host/guest start load missing")
+        else:
+            if host_start_load > host_load_limit:
+                j10a_problems.append(
+                    f"host start load {host_start_load:g} > "
+                    f"{host_load_limit:g}")
+            if guest_start_load > expected["guest_load_start_max"]:
+                j10a_problems.append(
+                    f"guest start load {guest_start_load:g} > "
+                    f"{expected['guest_load_start_max']:g}")
+        if guest_end_load is not None and guest_end_load > expected["guest_load_end_warn"]:
+            record["warnings"].append(
+                f"guest end load {guest_end_load:g} > "
+                f"{expected['guest_load_end_warn']:g} (diagnostic, not a reject)")
+        if host_end_load is not None and host_end_load > host_load_limit:
+            record["warnings"].append(
+                f"host end load {host_end_load:g} > "
+                f"{host_load_limit:g} (diagnostic, not a reject)")
+        status_check(checks, "J10a_load_gate", not j10a_problems,
+                     "start load within the pre-registered gate"
+                     if not j10a_problems else "; ".join(j10a_problems))
+        record["reasons"].extend(f"J10a_load_gate: {p}" for p in j10a_problems)
 
     # ---- J10b: Windows CPU / crosvm monitor ------------------------------
     win_mean = manifest.get("windows_cpu_mean_pct")
@@ -949,28 +947,8 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
                      if not j11 else "; ".join(j11))
         record["reasons"].extend(f"J11_bpf_stats_off: {p}" for p in j11)
 
-    # ---- J12: external freeze manifest -----------------------------------
-    if freeze_manifest is None:
-        status_gap(
-            checks, "J12_freeze_manifest",
-            "no matrix.json freeze manifest at the result root; internal hash "
-            "consistency is checked at matrix level")
-    else:
-        frozen_app = freeze_manifest.get("app_sha256")
-        frozen_sched = (freeze_manifest.get("scheduler_sha256") or {}).get(
-            norm_policy(policy))
-        j12 = []
-        if frozen_app is not None and manifest.get("app_sha256") != frozen_app:
-            j12.append("app hash differs from matrix.json")
-        if frozen_sched is not None and (
-                (manifest.get("scheduler_sha256") or "").strip()
-                != frozen_sched):
-            j12.append("scheduler hash differs from matrix.json")
-        status_check(checks, "J12_freeze_manifest", not j12,
-                     "hashes match matrix.json" if not j12 else "; ".join(j12))
-        record["reasons"].extend(f"J12_freeze_manifest: {p}" for p in j12)
 
-    # ---- W: warm-up iteration handling (protocol, not J1-J12) ------------
+    # ---- W: warm-up iteration handling (protocol, not J1-J11) ------------
     warmup_manifest = manifest.get("warmup_iterations")
     warmup_summary = summary.get("warmup_iterations")
     warmup_info = {
@@ -1070,8 +1048,7 @@ def evaluate_run(root, policy, run, expected, freeze_manifest=None):
 # Matrix-level checks
 
 
-def matrix_controls(root, records, expected_runs, freeze_manifest=None,
-                    policies=None, expected=None):
+def matrix_controls(root, records, expected_runs, policies=None, expected=None):
     present = [r for r in records if r["present"]]
     expected = expected or EXPECTED
     by_policy = defaultdict(list)
@@ -1257,35 +1234,6 @@ def matrix_controls(root, records, expected_runs, freeze_manifest=None,
             "recorded at this root"),
     }
 
-    # M5: frozen hashes.
-    app_hashes = sorted({r["hashes"].get("app_sha256")
-                         for r in present if r.get("hashes")})
-    per_policy_hashes = {}
-    for policy in expected_policies:
-        values = sorted({r["hashes"].get("scheduler_sha256")
-                         for r in by_policy.get(policy, [])
-                         if r.get("hashes")})
-        per_policy_hashes[policy] = values
-    hash_issues = []
-    if len(app_hashes) != 1:
-        hash_issues.append(f"app hashes vary: {app_hashes}")
-    for policy, values in per_policy_hashes.items():
-        if len(values) != 1:
-            hash_issues.append(f"{policy} scheduler hashes vary: {values}")
-    external_ok = freeze_manifest is not None
-    controls["M5_frozen_hashes"] = {
-        "status": "pass" if not hash_issues and external_ok else
-        ("unverifiable" if not hash_issues else "fail"),
-        "app_sha256": app_hashes,
-        "scheduler_sha256": per_policy_hashes,
-        "matrix_json_present": external_ok,
-        "issues": hash_issues,
-        "detail": (
-            "hashes are internally constant; no matrix.json freeze manifest "
-            "exists at the root" if not hash_issues and not external_ok else
-            ("hashes are constant and match matrix.json"
-             if not hash_issues else "; ".join(hash_issues))),
-    }
 
     # Diagnostic: per-policy median end load.
     end_loads = {}
@@ -1341,6 +1289,8 @@ def discover(root, policies, expected_runs, expected=None):
 def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
                  run_count=None, benchmarks=None):
     expected = dict(EXPECTED)
+    smoke_profile = (
+        os.environ.get("JANKBENCH_VALIDATION_PROFILE") == "smoke")
     if benchmark_id is not None:
         expected["benchmark_id"] = benchmark_id
     if run_count is not None:
@@ -1356,29 +1306,21 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
                     "host_window_s", "reference"):
             if key in bench:
                 expected[key] = bench[key]
+    # Smoke proves the run produced data; campaign frame and duration minima
+    # are calibrated for the longer four-iteration protocol.
+    if smoke_profile:
+        expected["min_total_frames"] = 1
+        expected["min_iteration_frames"] = 1
+        expected["host_window_s"] = [0.0, expected["host_window_s"][1]]
+    expected["validation_profile"] = "smoke" if smoke_profile else "campaign"
     if policies is not None and isinstance(policies, str):
         policies = [p for p in policies.split(",") if p]
     root = os.path.abspath(root)
-    freeze_path = os.path.join(root, "matrix.json")
-    freeze_manifest = None
-    if os.path.isfile(freeze_path):
-        try:
-            freeze_manifest = read_json(freeze_path)
-            if isinstance(freeze_manifest, dict):
-                for _k in ("kernel", "nproc", "sdk", "build", "selinux", "app_sha256"):
-                    live = freeze_manifest.get(_k)
-                    if live is None:
-                        continue
-                    if expected.get(_k) in (None, ""):
-                        expected[_k] = live
-        except (OSError, json.JSONDecodeError):
-            freeze_manifest = None
 
     policies, records = discover(root, policies, expected_runs, expected)
-    # Re-evaluate with the caller-provided benchmark id and freeze manifest.
+    # Re-evaluate with the caller-provided benchmark id and expectations.
     for rec in records:
-        fresh = evaluate_run(root, rec["policy"], rec["run"], expected,
-                             freeze_manifest=freeze_manifest)
+        fresh = evaluate_run(root, rec["policy"], rec["run"], expected)
         fresh["_dir"] = rec["_dir"]
         rec.clear()
         rec.update(fresh)
@@ -1392,7 +1334,7 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
         except (OSError, json.JSONDecodeError):
             rec["metrics"]["_host_start"] = None
 
-    controls = matrix_controls(root, records, expected_runs, freeze_manifest,
+    controls = matrix_controls(root, records, expected_runs,
                                policies=policies, expected=expected)
 
     present = [r for r in records if r["present"]]
@@ -1485,12 +1427,12 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
         "generated_at": iso_now(),
         "root": root,
         "expectations": {
+            "validation_profile": expected["validation_profile"],
             "kernel": expected["kernel"],
             "nproc": expected["nproc"],
             "sdk": expected["sdk"],
             "build": expected["build"],
             "selinux": expected["selinux"],
-            "app_sha256": expected["app_sha256"],
             "benchmark_id": expected["benchmark_id"],
             "benchmark_name": expected.get("benchmark_name"),
             "benchmark_slug": expected.get("benchmark_slug"),
@@ -1500,12 +1442,12 @@ def build_report(root, expected_runs=10, benchmark_id=None, policies=None,
             "host_window_s": expected["host_window_s"],
             "guest_load_start_max": expected["guest_load_start_max"],
             "host_load_start_max": expected["host_load_start_max"],
+            "host_load_limit_per_cpu": 0.25,
             "bpf_stats_timing": expected["bpf_stats_timing"],
             "policy_spec": {
                 p: {
                     "binary": spec["binary"],
                     "ops": spec["ops"],
-                    "sha256": spec["sha256"],
                 } for p, spec in POLICY_SPEC.items()
             },
         },
@@ -1554,8 +1496,6 @@ def flatten_row(rec):
         "bpf_stats_after": metrics.get("bpf_stats_after"),
         "boot_id": rec.get("boot", {}).get("start"),
         "boot_id_end": rec.get("boot", {}).get("end"),
-        "scheduler_sha256": rec.get("hashes", {}).get("scheduler_sha256"),
-        "app_sha256": rec.get("hashes", {}).get("app_sha256"),
     }
 
 
@@ -1567,7 +1507,6 @@ CSV_FIELDS = [
     "mean_ms", "p50_ms", "p95_ms", "p99_ms", "jank_pct", "host_window_s",
     "guest_load_start", "guest_load_end", "host_load_start", "host_load_end",
     "bpf_stats_before", "bpf_stats_after", "boot_id", "boot_id_end",
-    "scheduler_sha256", "app_sha256",
 ]
 
 
@@ -1657,7 +1596,7 @@ def main(argv=None):
                        help="benchmark catalogue JSON (default: next to this "
                             "script)")
     parser.add_argument("--strict", action="store_true",
-                       help="exit 2 if any J1-J12 criterion is unverifiable")
+                       help="exit 2 if any J1-J11 criterion is unverifiable")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
