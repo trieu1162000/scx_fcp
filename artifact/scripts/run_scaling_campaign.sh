@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Run the fcp_frame_bench scaling matrix in one shot.
+# Run the microbenchmark matrix in one shot.
 #
-# For each vCPU count and topology:
+# CF: for each vCPU count and topology:
 #   1. launch Cuttlefish,
 #   2. attach each policy,
 #   3. run RUNS samples of fcp_frame_bench,
 #   4. reboot once with ProxyExec for the EEVDF+ProxyExec cell.
 #
+# Device: run one fixed-SoC cell per policy; CPU/topology lists are ignored.
 # This is a host-side campaign. It does not modify the paper data. The output
 # is a tree of per-run JSON files, suitable for the paper's scaling summary.
 #
@@ -86,122 +87,139 @@ if [ "$BENCH" = schbench ] || [ "$BENCH" = all ]; then
   [ -x "$BIN_DIR/schbench" ] || die "missing $BIN_DIR/schbench; run ./artifact/pipeline.sh build"
 fi
 
-for c in $CPUS_LIST; do
-  if [ "$c" -gt "$host_nproc" ] && [ "$ALLOW_OVERSIZED" != 1 ]; then
-    log "SKIP ${c}-vCPU: host has only ${host_nproc} CPUs (ALLOW_OVERSIZED=1 to force)"
-    continue
+stop_sched() {
+  for p in scx_fcp scx_fcp_behavioral scx_lavd scx_p2dq; do
+    pid=$(sh_ "pidof $p" || true)
+    [ -n "$pid" ] && sh_ "kill -TERM $pid" >/dev/null 2>&1 || true
+  done
+  local deadline=$((SECONDS + 30))
+  while [ $SECONDS -lt $deadline ]; do
+    [ "$(state)" = "disabled" ] && return 0
+    sleep 1
+  done
+  log "WARNING sched_ext state=$(state) after stop"
+  return 0
+}
+
+start_sched() {
+  local policy=$1 bin args expected
+  stop_sched
+  if [ "$policy" = "eevdf" ] || [ "$policy" = "eevdf_proxy_exec" ]; then
+    return 0
   fi
-  case "$c" in 4|8|16|32) ;; *) die "CPUS must be 4, 8, 16, or 32 (got $c)" ;; esac
-  BG=$((3 * c / 4))
-  for t in $TOPOS; do
-    case "$t" in sym|asym|dl) ;; *) die "unknown TOPO=$t (use sym, asym, or dl)" ;; esac
-    if [ "$t" = "sym" ]; then
-      # Force all CPUs to capacity 1024. If --big-cpus is omitted on a
-      # symmetric VM, scx_fcp defaults to treating the top half as big.
-      BIG=$(seq -s, 0 $((c - 1)))
-    else
-      BIG=$(seq -s, $((c / 2)) $((c - 1)))
-    fi
-    CELL=$OUT/${c}vCPU_${t}
-    mkdir -p "$CELL"
-    log "launch cpus=$c topo=$t bg=$BG big=${BIG:-none}"
-    CPUS=$c TOPO=$t PROXY_EXEC=0 SERIAL=$SERIAL ADB=$ADB \
-      "$ROOT/artifact/pipeline.sh" launch >>"$LOG" 2>&1 || die "launch failed cpus=$c topo=$t"
-
-    stop_sched() {
-      for p in scx_fcp scx_fcp_behavioral scx_lavd scx_p2dq; do
-        pid=$(sh_ "pidof $p" || true)
-        [ -n "$pid" ] && sh_ "kill -TERM $pid" >/dev/null 2>&1 || true
-      done
-      local deadline=$((SECONDS + 30))
-      while [ $SECONDS -lt $deadline ]; do
-        [ "$(state)" = "disabled" ] && return 0
-        sleep 1
-      done
-      log "WARNING sched_ext state=$(state) after stop"
+  case "$policy" in
+    scx_p2dq_pelt_off) bin=scx_p2dq; args="--enable-pelt false"; expected=p2dq ;;
+    scx_lavd)          bin=scx_lavd; args=""; expected=lavd ;;
+    scx_fcp)           bin=scx_fcp; args=""; expected=fcp ;;
+    scx_fcp_behavioral) bin=scx_fcp_behavioral; args=""; expected=fcp_zh ;;
+    *) die "unknown policy $policy" ;;
+  esac
+  if { [ "$policy" = "scx_fcp" ] || [ "$policy" = "scx_fcp_behavioral" ]; } && [ -n "$BIG" ]; then
+    args="$args --big-cpus $BIG"
+  fi
+  "$ADB" -s "$SERIAL" push "$BIN_DIR/$bin" "$REMOTE/$bin" >/dev/null
+  sh_ "chmod 755 $REMOTE/$bin"
+  sh_ "cd $REMOTE && ulimit -l unlimited && SCX_STATS_BASE_PATH=$REMOTE/stats nohup ./$bin $args >$REMOTE/${policy}.log 2>&1 </dev/null &"
+  local deadline=$((SECONDS + 120))
+  while [ $SECONDS -lt $deadline ]; do
+    if [ "$(state)" = "enabled" ] && printf '%s' "$(ops)" | grep -q "$expected"; then
       return 0
-    }
+    fi
+    sleep 2
+  done
+  die "scheduler $policy did not reach enabled/$expected (state=$(state) ops=$(ops))"
+}
 
-    start_sched() {
-      local policy=$1 bin args expected
-      stop_sched
-      if [ "$policy" = "eevdf" ] || [ "$policy" = "eevdf_proxy_exec" ]; then
-        return 0
-      fi
-      case "$policy" in
-        scx_p2dq_pelt_off) bin=scx_p2dq; args="--enable-pelt false"; expected=p2dq ;;
-        scx_lavd)          bin=scx_lavd; args=""; expected=lavd ;;
-        scx_fcp)           bin=scx_fcp; args=""; expected=fcp ;;
-        scx_fcp_behavioral) bin=scx_fcp_behavioral; args=""; expected=fcp_zh ;;
-        *) die "unknown policy $policy" ;;
-      esac
-      if { [ "$policy" = "scx_fcp" ] || [ "$policy" = "scx_fcp_behavioral" ]; } && [ -n "$BIG" ]; then
-        args="$args --big-cpus $BIG"
-      fi
-      "$ADB" -s "$SERIAL" push "$BIN_DIR/$bin" "$REMOTE/$bin" >/dev/null
-      sh_ "chmod 755 $REMOTE/$bin"
-      sh_ "cd $REMOTE && ulimit -l unlimited && SCX_STATS_BASE_PATH=$REMOTE/stats nohup ./$bin $args >$REMOTE/${policy}.log 2>&1 </dev/null &"
-      local deadline=$((SECONDS + 120))
-      while [ $SECONDS -lt $deadline ]; do
-        if [ "$(state)" = "enabled" ] && printf '%s' "$(ops)" | grep -q "$expected"; then
-          return 0
-        fi
-        sleep 2
-      done
-      die "scheduler $policy did not reach enabled/$expected (state=$(state) ops=$(ops))"
-    }
-
-    run_cell() {
-      local policy=$1 r dest fcp_root schbench_root
-      dest=$CELL/$policy
-      mkdir -p "$dest"
-      start_sched "$policy"
-      for r in $(seq 1 "$RUNS"); do
-        if [ "$BENCH" = fcp ] || [ "$BENCH" = all ]; then
-          if [ "$BENCH" = all ]; then fcp_root=$dest/fcp; else fcp_root=$dest; fi
-          TARGET=device \
-            SERIAL=$SERIAL \
-            ADB=$ADB \
-            BIN_DIR=$BIN_DIR \
-            RESULTS_ROOT="$fcp_root" \
-            SCHEDULER_LABEL="$policy" \
-            FRAMES=$FRAMES \
-            HZ=$HZ \
-            STAGES=$STAGES \
-            STAGE_US=$STAGE_US \
-            BG_WORKERS=$BG \
-            "$ROOT/tests/synthetic/run_fcp_frame_bench.sh" >>"$LOG" 2>&1 || die "fcp run failed $policy run=$r"
-          log "done bench=fcp cpus=$c topo=$t policy=$policy run=$r"
-        fi
-        if [ "$BENCH" = schbench ] || [ "$BENCH" = all ]; then
-          if [ "$BENCH" = all ]; then schbench_root=$dest/schbench; else schbench_root=$dest; fi
-          TARGET=device \
-            SERIAL=$SERIAL \
-            ADB=$ADB \
-            BIN_DIR=$BIN_DIR \
-            RESULTS_ROOT="$schbench_root" \
-            SCHEDULER_LABEL="$policy" \
-            SCHBENCH_THREADS="$SCHBENCH_THREADS" \
-            SCHBENCH_ARGS="$SCHBENCH_ARGS" \
-            "$ROOT/tests/synthetic/run_schbench.sh" >>"$LOG" 2>&1 || die "schbench run failed $policy run=$r"
-          log "done bench=schbench cpus=$c topo=$t policy=$policy run=$r"
-        fi
-      done
-      stop_sched
-    }
-
-    for policy in $NORMAL_POLICIES; do
-      run_cell "$policy"
-    done
-
-    if [ "$RUN_PROXY" = 1 ]; then
-      log "relaunch cpus=$c topo=$t proxy_exec=1"
-      CPUS=$c TOPO=$t PROXY_EXEC=1 SERIAL=$SERIAL ADB=$ADB \
-        "$ROOT/artifact/pipeline.sh" launch >>"$LOG" 2>&1 || die "proxy launch failed"
-      run_cell "eevdf_proxy_exec"
+run_cell() {
+  local policy=$1 r dest fcp_root schbench_root
+  dest=$CELL/$policy
+  mkdir -p "$dest"
+  start_sched "$policy"
+  for r in $(seq 1 "$RUNS"); do
+    if [ "$BENCH" = fcp ] || [ "$BENCH" = all ]; then
+      if [ "$BENCH" = all ]; then fcp_root=$dest/fcp; else fcp_root=$dest; fi
+      TARGET=device \
+        SERIAL=$SERIAL \
+        ADB=$ADB \
+        BIN_DIR=$BIN_DIR \
+        RESULTS_ROOT="$fcp_root" \
+        SCHEDULER_LABEL="$policy" \
+        FRAMES=$FRAMES \
+        HZ=$HZ \
+        STAGES=$STAGES \
+        STAGE_US=$STAGE_US \
+        BG_WORKERS=$BG \
+        "$ROOT/tests/synthetic/run_fcp_frame_bench.sh" >>"$LOG" 2>&1 || die "fcp run failed $policy run=$r"
+      log "done bench=fcp cpus=$c topo=$t policy=$policy run=$r"
+    fi
+    if [ "$BENCH" = schbench ] || [ "$BENCH" = all ]; then
+      if [ "$BENCH" = all ]; then schbench_root=$dest/schbench; else schbench_root=$dest; fi
+      TARGET=device \
+        SERIAL=$SERIAL \
+        ADB=$ADB \
+        BIN_DIR=$BIN_DIR \
+        RESULTS_ROOT="$schbench_root" \
+        SCHEDULER_LABEL="$policy" \
+        SCHBENCH_THREADS="$SCHBENCH_THREADS" \
+        SCHBENCH_ARGS="$SCHBENCH_ARGS" \
+        "$ROOT/tests/synthetic/run_schbench.sh" >>"$LOG" 2>&1 || die "schbench run failed $policy run=$r"
+      log "done bench=schbench cpus=$c topo=$t policy=$policy run=$r"
     fi
   done
-done
+  stop_sched
+}
+
+if [ "${PLATFORM:-x86_64}" = "arm64" ]; then
+  # Physical device: fixed SoC topology, no 4/8/16/32 matrix.
+  RUN_PROXY=0
+  CPUS_LIST=8
+  TOPOS=device
+  c=8
+  t=device
+  BG=6
+  BIG=""
+  CELL=$OUT/device
+  mkdir -p "$CELL"
+  log "launch device bg=$BG"
+  CPUS=8 TOPO=sym PROXY_EXEC=0 SERIAL=$SERIAL ADB=$ADB \
+    "$ROOT/artifact/pipeline.sh" launch >>"$LOG" 2>&1 || die "launch failed device"
+  for policy in $NORMAL_POLICIES; do
+    run_cell "$policy"
+  done
+else
+  for c in $CPUS_LIST; do
+    if [ "$c" -gt "$host_nproc" ] && [ "$ALLOW_OVERSIZED" != 1 ]; then
+      log "SKIP ${c}-vCPU: host has only ${host_nproc} CPUs (ALLOW_OVERSIZED=1 to force)"
+      continue
+    fi
+    case "$c" in 4|8|16|32) ;; *) die "CPUS must be 4, 8, 16, or 32 (got $c)" ;; esac
+    BG=$((3 * c / 4))
+    for t in $TOPOS; do
+      case "$t" in sym|asym|dl) ;; *) die "unknown TOPO=$t (use sym, asym, or dl)" ;; esac
+      if [ "$t" = "sym" ]; then
+        BIG=$(seq -s, 0 $((c - 1)))
+      else
+        BIG=$(seq -s, $((c / 2)) $((c - 1)))
+      fi
+      CELL=$OUT/${c}vCPU_${t}
+      mkdir -p "$CELL"
+      log "launch cpus=$c topo=$t bg=$BG big=${BIG:-none}"
+      CPUS=$c TOPO=$t PROXY_EXEC=0 SERIAL=$SERIAL ADB=$ADB \
+        "$ROOT/artifact/pipeline.sh" launch >>"$LOG" 2>&1 || die "launch failed cpus=$c topo=$t"
+
+      for policy in $NORMAL_POLICIES; do
+        run_cell "$policy"
+      done
+
+      if [ "$RUN_PROXY" = 1 ]; then
+        log "relaunch cpus=$c topo=$t proxy_exec=1"
+        CPUS=$c TOPO=$t PROXY_EXEC=1 SERIAL=$SERIAL ADB=$ADB \
+          "$ROOT/artifact/pipeline.sh" launch >>"$LOG" 2>&1 || die "proxy launch failed"
+        run_cell "eevdf_proxy_exec"
+      fi
+    done
+  done
+fi
 
 cat >"$OUT/CAMPAIGN.txt" <<EOF
 scaling campaign

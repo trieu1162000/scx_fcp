@@ -30,8 +30,9 @@ Commands:
   full [--quick]        full 14-test matrix; --quick = smoke one cell
   micro [--suite SUITE] microbenchmark suite
                         SUITE=fcp|schbench|all (default: fcp)
-                        default fcp: 4/8/16/32 vCPU, sym+dl, 10 runs
-                        --quick = one 4-vCPU sym cell, one run
+                        CF: 4/8/16/32 vCPU, sym+dl, 10 runs
+                        device: fixed SoC, 10 runs, no CPU matrix
+                        --quick = one cell, one run
   overhead [--quick]    eBPF-overhead; default suite=all
                         --suite jankbench|uibench|all
                         --quick = one cross-check run
@@ -149,11 +150,6 @@ PY
     esac
     ;;
   micro)
-    [ "$PLATFORM" = x86_64 ] || {
-      echo "micro currently supports only PLATFORM=x86_64 (Cuttlefish)" >&2
-      exit 2
-    }
-
     SUITE=${MICRO_SUITE:-fcp}
     CPUS_LIST=${MICRO_CPUS_LIST:-"4 8 16 32"}
     TOPOS=${MICRO_TOPOS:-"sym dl"}

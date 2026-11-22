@@ -176,20 +176,21 @@ for profile in $PROFILES; do
     esac
 done
 
+BENCH_DIR="$SCX_SUB/tools/scx_fcp_bench"
+[ -d "$BENCH_DIR" ] || BENCH_DIR="$SCX_ROOT/tools/scx_fcp_bench"
 if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
-    BENCH_DIR="$SCX_SUB/tools/scx_fcp_bench"
-    [ -d "$BENCH_DIR" ] || BENCH_DIR="$SCX_ROOT/tools/scx_fcp_bench"
-    echo "build_static: building fcp_frame_bench in $BENCH_DIR"
-    make -C "$BENCH_DIR" clean >/dev/null 2>&1 || true
-    run_logged "$LOG_DIR/build-bench.log" \
-        make -C "$BENCH_DIR" \
-        CC="${CC:-cc}" \
-        CFLAGS="-O2 -g -Wall -Wextra -Werror -std=c11 -static" \
-        LDFLAGS="-pthread -lm"
-    install_bin "$BENCH_DIR/fcp_frame_bench" fcp_frame_bench
+    BENCH_CC=${BENCH_CC:-${CC:-cc}}
 else
-    echo "build_static: skipping host-only fcp_frame_bench for TARGET=$TARGET"
+    BENCH_CC=${BENCH_CC:-aarch64-linux-gnu-gcc}
 fi
+echo "build_static: building fcp_frame_bench with $BENCH_CC"
+make -C "$BENCH_DIR" clean >/dev/null 2>&1 || true
+run_logged "$LOG_DIR/build-bench.log" \
+    make -C "$BENCH_DIR" \
+    CC="$BENCH_CC" \
+    CFLAGS="-O2 -g -Wall -Wextra -Werror -std=c11 -static" \
+    LDFLAGS="-pthread -lm -static"
+install_bin "$BENCH_DIR/fcp_frame_bench" fcp_frame_bench
 
 SCHBENCH_DIR="$REPO_ROOT/tools/schbench"
 [ -d "$SCHBENCH_DIR" ] || die "missing schbench source: $SCHBENCH_DIR"

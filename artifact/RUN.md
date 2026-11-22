@@ -152,10 +152,12 @@ The default `fcp` protocol is 4/8/16/32 vCPUs, symmetric plus DL-shaped
 asymmetric topology, 10 runs per cell, and the normal policy set plus the
 ProxyExec relaunch. `schbench` uses the same scheduler matrix with the
 vendored `tools/schbench` binary. `all` runs both benchmarks per cell.
-Override individual dimensions with `--cpus`, `--topos`, `--runs`,
-`--frames`, `--hz`, `--stages`, `--stage-us`, `--policies`, `--out`,
-`--schbench-threads`, or `--schbench-args`. The same collection can be run
-directly with `artifact/scripts/run_scaling_campaign.sh` using `BENCH`.
+On `PLATFORM=arm64`, the runner uses one fixed-SoC cell and ignores the
+CPU/topology matrix. Override individual dimensions with `--cpus`,
+`--topos`, `--runs`, `--frames`, `--hz`, `--stages`, `--stage-us`,
+`--policies`, `--out`, `--schbench-threads`, or `--schbench-args`. The
+same collection can be run directly with
+`artifact/scripts/run_scaling_campaign.sh` using `BENCH`.
 
 For each vCPU configuration (`C` in `{4, 8, 16, 32}`), run 10 iterations per scheduler using the following setup:
 
