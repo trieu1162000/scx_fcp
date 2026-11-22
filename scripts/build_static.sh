@@ -37,7 +37,7 @@ warn() { echo "build_static: warning: $*" >&2; }
 [ -f "$SCX_SUB/Cargo.toml" ] || die "missing $SCX_SUB/Cargo.toml"
 
 for cmd in cargo rustc make cc file readelf sha256sum; do
-    command -v "$cmd" >/dev/null 2>&1 || die "missing host tool '$cmd'; see artifact/BUILD.md §1 (sudo apt-get install -y build-essential pkg-config libelf-dev libzstd-dev zlib1g-dev clang llvm lld bpftool pahole)"
+    command -v "$cmd" >/dev/null 2>&1 || die "missing host tool '$cmd'; see artifact/BUILD.md §1 (sudo apt-get install -y build-essential pkg-config libelf-dev libzstd-dev zlib1g-dev clang llvm lld pahole)"
 done
 if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
     for lib in /usr/lib/x86_64-linux-gnu/libelf.a /usr/lib/x86_64-linux-gnu/libz.a; do

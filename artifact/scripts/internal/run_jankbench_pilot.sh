@@ -107,7 +107,13 @@ bpf_stats_set() {
 }
 
 bpf_snapshot() {
-  "${A[@]}" shell 'bpftool prog show --json' > "$1" 2>>"$LOG" || true
+  # TODO(1.4): replace the fdinfo fallback with the native BPF stats helper.
+  if [ -z "$BIN" ]; then
+    printf '[]\n' > "$1"
+    return 0
+  fi
+  python3 "$ROOT/scripts/internal/bpf_snapshot_fdinfo.py" \
+    --adb "$ADB" --serial "$SERIAL" --bin "$BIN" --out "$1" 2>>"$LOG" || true
 }
 
 state() {
@@ -565,6 +571,26 @@ kill_stale_schedulers || die "could not return sched_ext to disabled"
 prepare_app
 wait_quiet || true
 log "boot ready kernel=$(sh_ 'uname -r' | tr -d '\r') nproc=$(sh_ 'nproc' | tr -d '\r') selinux=$(sh_ 'getenforce' | tr -d '\r') uptime=$(sh_ 'cat /proc/uptime' | tr -d '\r')"
+
+# Cuttlefish exposes the same symmetric cpu_capacity sysfs for sym and dl.
+# Tell the FCP variants explicitly which CPUs carry the high-capacity label.
+FCP_CAPACITY_ARGS=""
+GUEST_NPROC=$(sh_ 'nproc' | tr -d '\r')
+if [ -n "$BIN" ]; then
+  case "$BIN" in
+    scx_fcp*)
+      case "$GUEST_NPROC" in
+        ''|*[!0-9]*) die "invalid guest nproc: ${GUEST_NPROC:-empty}" ;;
+      esac
+      FCP_CAPACITY_ARGS=$(fcp_capacity_args "${TOPO:-}" "$GUEST_NPROC" "${PLATFORM:-x86_64}") || \
+        die "could not derive capacity labels for topology=${TOPO:-unset} nproc=$GUEST_NPROC"
+      if [ -n "$FCP_CAPACITY_ARGS" ]; then
+        ARGS="${ARGS:+$ARGS }$FCP_CAPACITY_ARGS"
+      fi
+      ;;
+  esac
+fi
+log "topology=${TOPO:-unset} guest_nproc=$GUEST_NPROC capacity_args=${FCP_CAPACITY_ARGS:-none}"
 
 STATE_BEFORE=$(state)
 OPS_BEFORE=$(ops)

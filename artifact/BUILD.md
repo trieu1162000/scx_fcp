@@ -14,7 +14,7 @@ Tested on Ubuntu 24.04.1 LTS x86_64. Install required host packages:
 sudo apt-get update
 sudo apt-get install -y \
   build-essential pkg-config libelf-dev libzstd-dev zlib1g-dev \
-  clang llvm lld bpftool pahole python3 unzip rsync adb \
+  clang llvm lld pahole python3 unzip rsync adb \
   gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 ```
 

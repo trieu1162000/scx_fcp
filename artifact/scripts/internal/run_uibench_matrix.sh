@@ -29,10 +29,12 @@ POLICIES="eevdf,scx_fcp_behavioral,scx_p2dq_pelt_off,scx_lavd"
 TESTS="inflating-list,bitmap-upload,shadow-grid-list"
 WARMUP_TEST=inflating-list
 REMOTE=/data/local/tmp/scx
+ATTACHED_BIN=""
 BINDIR=${BINDIR:-${BIN_DIR:-$PAPER/build/bin}}
 NO_REBOOT=0
 VALIDATE=${VALIDATE:-1}
 VALIDATE_ATTEMPTS=${VALIDATE_ATTEMPTS:-3}
+BPF_STATS=${BPF_STATS:-0}
 # Tests that are known to be unmeasurable with the frozen APK.  Their rows are
 # still attempted and reported, but they do not make the whole block fail (a
 # single permanently-invalid test must not discard valid data for the others).
@@ -84,6 +86,18 @@ system_server_pid() { sh_ 'pidof system_server' | tr -d '\r' | awk '{print $1}' 
 scx_state() { sh_ 'cat /sys/kernel/sched_ext/state 2>/dev/null' | tr -d '\r' || true; }
 scx_ops() { sh_ 'cat /sys/kernel/sched_ext/root/ops 2>/dev/null' | tr -d '\r' || true; }
 boot_id() { sh_ 'cat /proc/sys/kernel/random/boot_id' | tr -d '\r' || true; }
+bpf_stats_set() { sh_ "echo $1 > /proc/sys/kernel/bpf_stats_enabled" >/dev/null 2>&1 || true; }
+bpf_stats_get() { sh_ 'cat /proc/sys/kernel/bpf_stats_enabled 2>/dev/null' | tr -d '\r' || true; }
+bpf_snapshot() {
+  # TODO(1.4): replace the fdinfo fallback with the native BPF stats helper.
+  if [ -z "$ATTACHED_BIN" ]; then
+    printf '[]\n' > "$1"
+    return 0
+  fi
+  python3 "$HERE/bpf_snapshot_fdinfo.py" \
+    --adb "$ADB" --serial "$SERIAL" --bin "$ATTACHED_BIN" --out "$1" \
+    2>/dev/null || true
+}
 
 services_ready() {
   local activity ss sysui
@@ -306,24 +320,35 @@ kill_all_scx() {
 
 attach_policy() {
   local policy=$1
-  local bin="" args="" ops="" state="enabled"
+  local bin="" args="" ops="" state="enabled" fcp_args="" guest_nproc=""
+  case "$policy" in
+    scx_fcp*)
+      guest_nproc=$(sh_ 'nproc' | tr -d '\r')
+      case "$guest_nproc" in
+        ''|*[!0-9]*) die "invalid guest nproc for $policy: ${guest_nproc:-empty}" ;;
+      esac
+      fcp_args=$(fcp_capacity_args "${TOPO:-}" "$guest_nproc" "${PLATFORM:-x86_64}") || \
+        die "could not derive capacity labels for topology=${TOPO:-unset} nproc=$guest_nproc"
+      ;;
+  esac
   case "$policy" in
     eevdf|eevdf_proxy_exec) state=disabled; ops="" ;;
-    scx_fcp) bin=scx_fcp; ops=fcp ;;
-    scx_fcp_behavioral) bin=scx_fcp_behavioral; ops=fcp_zh ;;
-    scx_fcp_v_stable_root) bin=scx_fcp_v_stable_root; ops=fcp_zh ;;
-    scx_fcp_v_bounded_fanout) bin=scx_fcp_v_bounded_fanout; ops=fcp_zh ;;
-    scx_fcp_v_tail_guard) bin=scx_fcp_v_tail_guard; ops=fcp_zh ;;
-    scx_fcp_v_jank_guard) bin=scx_fcp_v_jank_guard; ops=fcp_zh ;;
-    scx_fcp_v_a_depth3) bin=scx_fcp_v_a_depth3; ops=fcp_zh ;;
-    scx_fcp_v_a_expiry75) bin=scx_fcp_v_a_expiry75; ops=fcp_zh ;;
-    scx_fcp_v_a_depth3_expiry75) bin=scx_fcp_v_a_depth3_expiry75; ops=fcp_zh ;;
-    scx_fcp_v_a_depth3_tgid1ms) bin=scx_fcp_v_a_depth3_tgid1ms; ops=fcp_zh ;;
-    scx_fcp_v_a_depth4) bin=scx_fcp_v_a_depth4; ops=fcp_zh ;;
+    scx_fcp) bin=scx_fcp; args="$fcp_args"; ops=fcp ;;
+    scx_fcp_behavioral|scx_fcp_zh) bin=scx_fcp_behavioral; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_stable_root) bin=scx_fcp_v_stable_root; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_bounded_fanout) bin=scx_fcp_v_bounded_fanout; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_tail_guard) bin=scx_fcp_v_tail_guard; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_jank_guard) bin=scx_fcp_v_jank_guard; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth3) bin=scx_fcp_v_a_depth3; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_expiry75) bin=scx_fcp_v_a_expiry75; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth3_expiry75) bin=scx_fcp_v_a_depth3_expiry75; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth3_tgid1ms) bin=scx_fcp_v_a_depth3_tgid1ms; args="$fcp_args"; ops=fcp_zh ;;
+    scx_fcp_v_a_depth4) bin=scx_fcp_v_a_depth4; args="$fcp_args"; ops=fcp_zh ;;
     scx_p2dq_pelt_off) bin=scx_p2dq; args="--enable-pelt false"; ops=p2dq ;;
     scx_lavd) bin=scx_lavd; ops=lavd ;;
     *) die "unknown policy $policy" ;;
   esac
+  ATTACHED_BIN=$bin
 
   kill_all_scx
   sleep 2
@@ -343,7 +368,7 @@ attach_policy() {
   while [ $SECONDS -lt $deadline ]; do
     st=$(scx_state); o=$(scx_ops)
     if [ "$st" = "enabled" ] && printf '%s' "$o" | grep -q "$ops"; then
-      log "policy $policy enabled ops=$o"
+      log "policy $policy enabled ops=$o capacity_args=${fcp_args:-none}"
       sh_ "cat $logf" > "$OUT/${policy}_scheduler.log" 2>/dev/null || true
       sh_ 'dmesg' | grep -iE 'sched_ext|scx|lavd|p2dq|fcp' | tail -20 > "$OUT/${policy}_dmesg.txt" 2>/dev/null || true
       return 0
@@ -455,10 +480,66 @@ run_block_once() {
     --out "$OUT/_warmup/$policy/round$round" --tests "$WARMUP_TEST" > "$blockdir/warmup.log" 2>&1 || \
     log "WARNING warm-up failed"
 
+  local bpf_before="" bpf_after="" start_iso="" end_iso=""
+  if [ "$BPF_STATS" = 1 ]; then
+    bpf_stats_set 1
+    bpf_before=$(bpf_stats_get)
+    printf '%s\n' "$bpf_before" > "$blockdir/bpf_stats_enabled_before.txt"
+    bpf_snapshot "$blockdir/bpf_before.json"
+    start_iso=$(date -Iseconds)
+  fi
+
   log "measured policy=$policy round=$round reps=$reps"
+  local ui_extra=()
+  [ "$BPF_STATS" = 1 ] && ui_extra+=(--no-install)
   "$HERE/run_uibench.sh" -s "$SERIAL" -p "$policy" -r "$reps" -n "$round" \
-    --out "$blockdir/raw" --tests "$TESTS" --shuffle > "$blockdir/run.log" 2>&1 || \
+    --out "$blockdir/raw" --tests "$TESTS" --shuffle "${ui_extra[@]}" \
+    > "$blockdir/run.log" 2>&1 || \
     log "WARNING measured block returned non-zero"
+
+  if [ "$BPF_STATS" = 1 ]; then
+    end_iso=$(date -Iseconds)
+    bpf_snapshot "$blockdir/bpf_after.json"
+    bpf_after=$(bpf_stats_get)
+    printf '%s\n' "$bpf_after" > "$blockdir/bpf_stats_enabled_after.txt"
+    bpf_stats_set 0
+    local guest_nproc
+    guest_nproc=$(sh_ 'nproc' | tr -d '\r')
+    python3 - "$blockdir" "$policy" "$round" "$start_iso" "$end_iso" \
+      "$bpf_before" "$bpf_after" "$guest_nproc" <<'PY'
+import glob
+import json
+import os
+import sys
+from pathlib import Path
+
+block = Path(sys.argv[1])
+policy, run = sys.argv[2], int(sys.argv[3])
+start, end = sys.argv[4], sys.argv[5]
+frames = 0
+for path in glob.glob(str(block / "raw" / "**" / "metrics.json"), recursive=True):
+    try:
+        data = json.load(open(path))
+    except (OSError, json.JSONDecodeError):
+        continue
+    for row in data.get("tests") or []:
+        frames += int(row.get("frames") or 0)
+manifest = {
+    "policy": policy,
+    "run": run,
+    "host_start": start,
+    "host_end": end,
+    "nproc": int(sys.argv[8] or 0),
+    "bpf_stats_enabled_before": sys.argv[6],
+    "bpf_stats_enabled_after": sys.argv[7],
+}
+summary = {"frames": frames, "iterations": [0]}
+(block / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+(block / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+PY
+    python3 "$HERE/parse_bpf_overhead.py" "$blockdir" >> "$LOG" 2>&1 || \
+      log "WARNING UiBench overhead parser failed for $blockdir"
+  fi
 
   stop_policy
   host_snapshot "$blockdir/host_after.json"

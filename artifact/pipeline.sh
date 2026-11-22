@@ -27,7 +27,11 @@ Commands:
   build                 build scheduler for the selected platform
   launch                launch Cuttlefish or prepare the configured device
   smoke                 one JankBench ID across supported policies
-  full                  full 14-test matrix (Cuttlefish or SA8155P)
+  full [--quick]        full 14-test matrix; --quick = smoke one cell
+  overhead [--quick]    eBPF-overhead; default suite=all
+                        --suite jankbench|uibench|all
+                        --quick = one cross-check run
+  overhead-analyze DIR  aggregate per-run bpf_overhead.json files
   resume --out DIR      resume an existing full campaign
   analyze DIR           integrate a full campaign (optional --out-dir DIR)
   help                  this message
@@ -139,6 +143,12 @@ PY
         ;;
       *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
     esac
+    ;;
+  overhead)
+    exec "$INTERNAL/run_bpf_overhead.sh" "$@"
+    ;;
+  overhead-analyze)
+    exec python3 "$INTERNAL/aggregate_bpf_overhead.py" "$@"
     ;;
   resume)
     case "$PLATFORM" in
