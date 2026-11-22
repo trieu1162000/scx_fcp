@@ -28,6 +28,9 @@ Commands:
   launch                launch Cuttlefish or prepare the configured device
   smoke                 one JankBench ID across supported policies
   full [--quick]        full 14-test matrix; --quick = smoke one cell
+  micro [--quick]       fcp_frame_bench scaling microbenchmark
+                        default: 4/8/16/32 vCPU, sym+dl, 10 runs
+                        --quick = one 4-vCPU sym cell, one run
   overhead [--quick]    eBPF-overhead; default suite=all
                         --suite jankbench|uibench|all
                         --quick = one cross-check run
@@ -143,6 +146,58 @@ PY
         ;;
       *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
     esac
+    ;;
+  micro)
+    [ "$PLATFORM" = x86_64 ] || {
+      echo "micro currently supports only PLATFORM=x86_64 (Cuttlefish)" >&2
+      exit 2
+    }
+
+    CPUS_LIST=${MICRO_CPUS_LIST:-"4 8 16 32"}
+    TOPOS=${MICRO_TOPOS:-"sym dl"}
+    RUNS=${MICRO_RUNS:-10}
+    FRAMES=${MICRO_FRAMES:-60}
+    HZ=${MICRO_HZ:-90}
+    STAGES=${MICRO_STAGES:-4}
+    STAGE_US=${MICRO_STAGE_US:-1800}
+    NORMAL_POLICIES=${MICRO_POLICIES:-"eevdf scx_p2dq_pelt_off scx_lavd scx_fcp scx_fcp_behavioral"}
+    RUN_PROXY=${MICRO_RUN_PROXY:-1}
+    ALLOW_OVERSIZED=${MICRO_ALLOW_OVERSIZED:-0}
+    OUT=${MICRO_OUT:-"$ARTIFACT/results/micro_$(date +%Y%m%d-%H%M%S)"}
+    QUICK=0
+
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --quick) QUICK=1; shift ;;
+        --cpus) CPUS_LIST=${2:?missing --cpus value}; shift 2 ;;
+        --topos|--topology) TOPOS=${2:?missing --topos value}; shift 2 ;;
+        --runs) RUNS=${2:?missing --runs value}; shift 2 ;;
+        --frames) FRAMES=${2:?missing --frames value}; shift 2 ;;
+        --hz) HZ=${2:?missing --hz value}; shift 2 ;;
+        --stages) STAGES=${2:?missing --stages value}; shift 2 ;;
+        --stage-us) STAGE_US=${2:?missing --stage-us value}; shift 2 ;;
+        --policies) NORMAL_POLICIES=${2:?missing --policies value}; shift 2 ;;
+        --out) OUT=${2:?missing --out value}; shift 2 ;;
+        --no-proxy) RUN_PROXY=0; shift ;;
+        --allow-oversized) ALLOW_OVERSIZED=1; shift ;;
+        -h|--help)
+          sed -n '/^  micro /,/^  overhead /p' "$0" | sed '$d'
+          exit 0
+          ;;
+        *) echo "unknown micro argument: $1" >&2; exit 2 ;;
+      esac
+    done
+
+    if [ "$QUICK" = 1 ]; then
+      CPUS_LIST=4
+      TOPOS=sym
+      RUNS=1
+      RUN_PROXY=0
+    fi
+
+    export CPUS_LIST TOPOS RUNS FRAMES HZ STAGES STAGE_US
+    export NORMAL_POLICIES RUN_PROXY ALLOW_OVERSIZED OUT
+    exec "$SCRIPTS/run_scaling_campaign.sh"
     ;;
   overhead)
     exec "$INTERNAL/run_bpf_overhead.sh" "$@"

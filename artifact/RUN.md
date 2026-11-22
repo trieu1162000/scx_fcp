@@ -134,6 +134,25 @@ Run the full campaign only after smoke passes.
 
 ## 4. Multi-core scaling benchmark (`fcp_frame_bench`, 4 / 8 / 16 / 32 vCPUs, 10 Runs)
 
+Use the microbenchmark pipeline entrypoint for the complete scaling experiment:
+
+```bash
+./artifact/pipeline.sh micro
+```
+
+Use `--quick` only as a one-cell smoke test:
+
+```bash
+./artifact/pipeline.sh micro --quick
+```
+
+The default protocol is 4/8/16/32 vCPUs, symmetric plus DL-shaped
+asymmetric topology, 10 runs per cell, and the normal policy set plus the
+ProxyExec relaunch. Override individual dimensions with `--cpus`, `--topos`,
+`--runs`, `--frames`, `--hz`, `--stages`, `--stage-us`, `--policies`, or
+`--out`. The same collection can be run directly with
+`artifact/scripts/run_scaling_campaign.sh`.
+
 For each vCPU configuration (`C` in `{4, 8, 16, 32}`), run 10 iterations per scheduler using the following setup:
 
 * **Background workers (`W_bg`):** `(3/4) * C` (corresponding to `3, 6, 12, 24` workers)
