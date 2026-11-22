@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Parse before/after bpftool JSON snapshots into one BPF-overhead record."""
+"""Parse before/after struct_ops runtime snapshots into one BPF-overhead record.
+
+The snapshot producer is bpf_snapshot_fdinfo.py; it emits the minimal
+program-id/runtime/count JSON shape consumed below.
+
+TODO(1.4): switch to the native BPF stats helper once it ships in the image.
+"""
 
 import argparse
 import csv

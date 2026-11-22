@@ -29,6 +29,7 @@ POLICIES="eevdf,scx_fcp_behavioral,scx_p2dq_pelt_off,scx_lavd"
 TESTS="inflating-list,bitmap-upload,shadow-grid-list"
 WARMUP_TEST=inflating-list
 REMOTE=/data/local/tmp/scx
+ATTACHED_BIN=""
 BINDIR=${BINDIR:-${BIN_DIR:-$PAPER/build/bin}}
 NO_REBOOT=0
 VALIDATE=${VALIDATE:-1}
@@ -88,7 +89,14 @@ boot_id() { sh_ 'cat /proc/sys/kernel/random/boot_id' | tr -d '\r' || true; }
 bpf_stats_set() { sh_ "echo $1 > /proc/sys/kernel/bpf_stats_enabled" >/dev/null 2>&1 || true; }
 bpf_stats_get() { sh_ 'cat /proc/sys/kernel/bpf_stats_enabled 2>/dev/null' | tr -d '\r' || true; }
 bpf_snapshot() {
-  "${A[@]}" shell 'bpftool prog show --json' > "$1" 2>/dev/null || true
+  # TODO(1.4): replace the fdinfo fallback with the native BPF stats helper.
+  if [ -z "$ATTACHED_BIN" ]; then
+    printf '[]\n' > "$1"
+    return 0
+  fi
+  python3 "$HERE/bpf_snapshot_fdinfo.py" \
+    --adb "$ADB" --serial "$SERIAL" --bin "$ATTACHED_BIN" --out "$1" \
+    2>/dev/null || true
 }
 
 services_ready() {
@@ -340,6 +348,7 @@ attach_policy() {
     scx_lavd) bin=scx_lavd; ops=lavd ;;
     *) die "unknown policy $policy" ;;
   esac
+  ATTACHED_BIN=$bin
 
   kill_all_scx
   sleep 2

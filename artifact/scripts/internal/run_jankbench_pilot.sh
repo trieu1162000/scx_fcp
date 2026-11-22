@@ -107,7 +107,13 @@ bpf_stats_set() {
 }
 
 bpf_snapshot() {
-  "${A[@]}" shell 'bpftool prog show --json' > "$1" 2>>"$LOG" || true
+  # TODO(1.4): replace the fdinfo fallback with the native BPF stats helper.
+  if [ -z "$BIN" ]; then
+    printf '[]\n' > "$1"
+    return 0
+  fi
+  python3 "$ROOT/scripts/internal/bpf_snapshot_fdinfo.py" \
+    --adb "$ADB" --serial "$SERIAL" --bin "$BIN" --out "$1" 2>>"$LOG" || true
 }
 
 state() {

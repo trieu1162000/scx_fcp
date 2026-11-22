@@ -4,7 +4,10 @@
 # Overhead is deliberately separate from the timing matrix: timing runs must
 # keep kernel.bpf_stats_enabled=0 (validate_jankbench.py J11).  This runner
 # enables BPF statistics only for its own JankBench runs and writes a separate
-# results tree with bpf_overhead.json files.
+# results tree with bpf_overhead.json files.  The snapshots are collected from
+# /proc/<pid>/fdinfo and do not require bpftool on the guest.
+#
+# TODO(1.4): replace the fdinfo fallback with the native BPF stats helper.
 #
 # Usage:
 #   ./artifact/pipeline.sh overhead --out DIR [--suite jankbench|uibench|all]
@@ -35,6 +38,7 @@ WARMUP_ITERATIONS=${OVERHEAD_WARMUP_ITERATIONS:?config.env must define OVERHEAD_
 POLICIES=${OVERHEAD_POLICIES:?config.env must define OVERHEAD_POLICIES}
 OUT=${OUT:-${OVERHEAD_OUT:?config.env must define OVERHEAD_OUT}}
 PARSER=$ARTIFACT/scripts/internal/parse_bpf_overhead.py
+SNAPSHOT=$ARTIFACT/scripts/internal/bpf_snapshot_fdinfo.py
 QUICK=0
 POLICIES_SET=0
 
@@ -80,6 +84,10 @@ esac
   echo "missing parser: $PARSER" >&2
   exit 2
 }
+[ -f "$SNAPSHOT" ] || {
+  echo "missing BPF snapshot helper: $SNAPSHOT" >&2
+  exit 2
+}
 
 mkdir -p "$OUT"
 LOG=$OUT/run.log
@@ -90,7 +98,7 @@ sh_() { "$ADB" -s "$SERIAL" shell "$@" 2>/dev/null | tr -d '\r'; }
 
 "$ADB" -s "$SERIAL" get-state >/dev/null 2>&1 || die "device $SERIAL not reachable"
 sh_ 'test -e /proc/sys/kernel/bpf_stats_enabled' || die "guest has no bpf_stats_enabled sysctl"
-sh_ 'command -v bpftool >/dev/null 2>&1' || die "guest has no bpftool; cannot snapshot struct_ops run_time_ns/run_cnt"
+sh_ 'test -r /proc/1/fdinfo' || die "guest cannot read /proc fdinfo"
 
 log "overhead start out=$OUT suite=$SUITE reps=$REPS policies=$POLICIES"
 log "topology=${TOPO:-unset} nproc=$(sh_ 'nproc') kernel=$(sh_ 'uname -r')"
