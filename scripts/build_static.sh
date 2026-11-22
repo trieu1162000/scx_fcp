@@ -191,6 +191,22 @@ else
     echo "build_static: skipping host-only fcp_frame_bench for TARGET=$TARGET"
 fi
 
+SCHBENCH_DIR="$REPO_ROOT/tools/schbench"
+[ -d "$SCHBENCH_DIR" ] || die "missing schbench source: $SCHBENCH_DIR"
+if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
+    SCHBENCH_CC=${SCHBENCH_CC:-${CC:-cc}}
+else
+    SCHBENCH_CC=${SCHBENCH_CC:-aarch64-linux-gnu-gcc}
+fi
+echo "build_static: building schbench with $SCHBENCH_CC"
+make -C "$SCHBENCH_DIR" clean >/dev/null 2>&1 || true
+run_logged "$LOG_DIR/build-schbench.log" \
+    make -C "$SCHBENCH_DIR" \
+    CC="$SCHBENCH_CC" \
+    CFLAGS="-O2 -g -static" \
+    LDFLAGS="-pthread -lm"
+install_bin "$SCHBENCH_DIR/schbench" schbench
+
 for bin in "$BIN_DIR"/*; do
     [ -f "$bin" ] || continue
     case "$(basename "$bin")" in

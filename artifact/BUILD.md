@@ -35,7 +35,7 @@ Set `SCX_ROOT` in [`artifact/config.env`](config.env), then run from the reposit
 ./artifact/pipeline.sh build
 ```
 
-This compiles all three static profiles from `src/bpf/main.bpf.c`, the baseline schedulers, and `fcp_frame_bench`:
+This compiles all three static profiles from `src/bpf/main.bpf.c`, the baseline schedulers, `fcp_frame_bench`, and `schbench`:
 
 ```text
 artifact/build/bin/scx_fcp             (default profile: behavioral + comm/PID roots, ops: fcp)
@@ -172,6 +172,7 @@ artifact/build/bin/scx_fcp
 artifact/build/bin/scx_fcp_named
 artifact/build/bin/scx_fcp_behavioral
 artifact/build/bin/fcp_frame_bench
+artifact/build/bin/schbench
 artifact/build/bin/scx_lavd
 artifact/build/bin/scx_p2dq
 artifact/workloads/JankBench-platform-signed.apk

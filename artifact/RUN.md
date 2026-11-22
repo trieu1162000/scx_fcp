@@ -137,21 +137,25 @@ Run the full campaign only after smoke passes.
 Use the microbenchmark pipeline entrypoint for the complete scaling experiment:
 
 ```bash
-./artifact/pipeline.sh micro
+./artifact/pipeline.sh micro --suite fcp
+./artifact/pipeline.sh micro --suite schbench
+./artifact/pipeline.sh micro --suite all
 ```
 
 Use `--quick` only as a one-cell smoke test:
 
 ```bash
-./artifact/pipeline.sh micro --quick
+./artifact/pipeline.sh micro --suite fcp --quick
 ```
 
-The default protocol is 4/8/16/32 vCPUs, symmetric plus DL-shaped
+The default `fcp` protocol is 4/8/16/32 vCPUs, symmetric plus DL-shaped
 asymmetric topology, 10 runs per cell, and the normal policy set plus the
-ProxyExec relaunch. Override individual dimensions with `--cpus`, `--topos`,
-`--runs`, `--frames`, `--hz`, `--stages`, `--stage-us`, `--policies`, or
-`--out`. The same collection can be run directly with
-`artifact/scripts/run_scaling_campaign.sh`.
+ProxyExec relaunch. `schbench` uses the same scheduler matrix with the
+vendored `tools/schbench` binary. `all` runs both benchmarks per cell.
+Override individual dimensions with `--cpus`, `--topos`, `--runs`,
+`--frames`, `--hz`, `--stages`, `--stage-us`, `--policies`, `--out`,
+`--schbench-threads`, or `--schbench-args`. The same collection can be run
+directly with `artifact/scripts/run_scaling_campaign.sh` using `BENCH`.
 
 For each vCPU configuration (`C` in `{4, 8, 16, 32}`), run 10 iterations per scheduler using the following setup:
 

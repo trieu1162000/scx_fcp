@@ -28,8 +28,9 @@ Commands:
   launch                launch Cuttlefish or prepare the configured device
   smoke                 one JankBench ID across supported policies
   full [--quick]        full 14-test matrix; --quick = smoke one cell
-  micro [--quick]       fcp_frame_bench scaling microbenchmark
-                        default: 4/8/16/32 vCPU, sym+dl, 10 runs
+  micro [--suite SUITE] microbenchmark suite
+                        SUITE=fcp|schbench|all (default: fcp)
+                        default fcp: 4/8/16/32 vCPU, sym+dl, 10 runs
                         --quick = one 4-vCPU sym cell, one run
   overhead [--quick]    eBPF-overhead; default suite=all
                         --suite jankbench|uibench|all
@@ -153,6 +154,7 @@ PY
       exit 2
     }
 
+    SUITE=${MICRO_SUITE:-fcp}
     CPUS_LIST=${MICRO_CPUS_LIST:-"4 8 16 32"}
     TOPOS=${MICRO_TOPOS:-"sym dl"}
     RUNS=${MICRO_RUNS:-10}
@@ -163,12 +165,17 @@ PY
     NORMAL_POLICIES=${MICRO_POLICIES:-"eevdf scx_p2dq_pelt_off scx_lavd scx_fcp scx_fcp_behavioral"}
     RUN_PROXY=${MICRO_RUN_PROXY:-1}
     ALLOW_OVERSIZED=${MICRO_ALLOW_OVERSIZED:-0}
+    SCHBENCH_THREADS=${MICRO_SCHBENCH_THREADS:-}
+    SCHBENCH_ARGS=${MICRO_SCHBENCH_ARGS:-"-m 1 -r 30 -w 5 -j -"}
     OUT=${MICRO_OUT:-"$ARTIFACT/results/micro_$(date +%Y%m%d-%H%M%S)"}
     QUICK=0
 
     while [ $# -gt 0 ]; do
       case "$1" in
         --quick) QUICK=1; shift ;;
+        --suite) SUITE=${2:?missing --suite value}; shift 2 ;;
+        --schbench-threads) SCHBENCH_THREADS=${2:?missing --schbench-threads value}; shift 2 ;;
+        --schbench-args) SCHBENCH_ARGS=${2:?missing --schbench-args value}; shift 2 ;;
         --cpus) CPUS_LIST=${2:?missing --cpus value}; shift 2 ;;
         --topos|--topology) TOPOS=${2:?missing --topos value}; shift 2 ;;
         --runs) RUNS=${2:?missing --runs value}; shift 2 ;;
@@ -188,15 +195,29 @@ PY
       esac
     done
 
+    case "$SUITE" in
+      fcp|schbench|all) ;;
+      *) echo "invalid --suite '$SUITE' (use fcp, schbench, or all)" >&2; exit 2 ;;
+    esac
+    if [ "$SUITE" = all ]; then
+      BENCH=all
+    else
+      BENCH=$SUITE
+    fi
+
     if [ "$QUICK" = 1 ]; then
       CPUS_LIST=4
       TOPOS=sym
       RUNS=1
       RUN_PROXY=0
+      if [ "$SUITE" = schbench ] || [ "$SUITE" = all ]; then
+        SCHBENCH_ARGS="-m 1 -r 5 -w 0 -j -"
+      fi
     fi
 
     export CPUS_LIST TOPOS RUNS FRAMES HZ STAGES STAGE_US
     export NORMAL_POLICIES RUN_PROXY ALLOW_OVERSIZED OUT
+    export BENCH SCHBENCH_THREADS SCHBENCH_ARGS
     exec "$SCRIPTS/run_scaling_campaign.sh"
     ;;
   overhead)

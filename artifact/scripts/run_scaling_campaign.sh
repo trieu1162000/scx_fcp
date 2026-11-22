@@ -19,6 +19,7 @@
 #   CPUS_LIST    default "4 8 16 32"
 #   TOPOS        default "sym dl"  (dl = SCHED_DEADLINE asymmetric)
 #   RUNS         default 10
+#   BENCH        fcp | schbench | all (default: fcp)
 #   FRAMES       default 60
 #   HZ           default 90
 #   STAGES       default 4
@@ -27,6 +28,7 @@
 #   CF_HOME      Cuttlefish host directory
 #   SERIAL/ADB   ADB target
 #   BIN_DIR      default artifact/build/bin
+#   SCHBENCH_ARGS default '-m 1 -r 30 -w 5 -j -'
 #
 # The script skips a vCPU count larger than the host CPU count unless
 # ALLOW_OVERSIZED=1. It does not fabricate missing cells.
@@ -56,6 +58,14 @@ export QUIET_GUEST=${QUIET_GUEST:-2.0}
 
 NORMAL_POLICIES=${NORMAL_POLICIES:-"eevdf scx_p2dq_pelt_off scx_lavd scx_fcp scx_fcp_behavioral"}
 RUN_PROXY=${RUN_PROXY:-1}
+BENCH=${BENCH:-fcp}
+SCHBENCH_THREADS=${SCHBENCH_THREADS:-}
+SCHBENCH_ARGS=${SCHBENCH_ARGS:-"-m 1 -r 30 -w 5 -j -"}
+
+case "$BENCH" in
+  fcp|schbench|all) ;;
+  *) echo "invalid BENCH=$BENCH (use fcp, schbench, or all)" >&2; exit 2 ;;
+esac
 
 mkdir -p "$OUT"
 LOG=$OUT/campaign.log
@@ -68,8 +78,13 @@ state() { sh_ 'cat /sys/kernel/sched_ext/state 2>/dev/null' || true; }
 ops() { sh_ 'cat /sys/kernel/sched_ext/root/ops 2>/dev/null' || true; }
 host_nproc=$(nproc || echo 0)
 
-[ -x "$BIN_DIR/fcp_frame_bench" ] || die "missing $BIN_DIR/fcp_frame_bench; run ./artifact/pipeline.sh build"
 [ -x "$BIN_DIR/scx_fcp" ] || die "missing scheduler binaries; run ./artifact/pipeline.sh build"
+if [ "$BENCH" = fcp ] || [ "$BENCH" = all ]; then
+  [ -x "$BIN_DIR/fcp_frame_bench" ] || die "missing $BIN_DIR/fcp_frame_bench; run ./artifact/pipeline.sh build"
+fi
+if [ "$BENCH" = schbench ] || [ "$BENCH" = all ]; then
+  [ -x "$BIN_DIR/schbench" ] || die "missing $BIN_DIR/schbench; run ./artifact/pipeline.sh build"
+fi
 
 for c in $CPUS_LIST; do
   if [ "$c" -gt "$host_nproc" ] && [ "$ALLOW_OVERSIZED" != 1 ]; then
@@ -137,24 +152,40 @@ for c in $CPUS_LIST; do
     }
 
     run_cell() {
-      local policy=$1 r dest
+      local policy=$1 r dest fcp_root schbench_root
       dest=$CELL/$policy
       mkdir -p "$dest"
       start_sched "$policy"
       for r in $(seq 1 "$RUNS"); do
-        TARGET=device \
-          SERIAL=$SERIAL \
-          ADB=$ADB \
-          BIN_DIR=$BIN_DIR \
-          RESULTS_ROOT="$dest" \
-          SCHEDULER_LABEL="$policy" \
-          FRAMES=$FRAMES \
-          HZ=$HZ \
-          STAGES=$STAGES \
-          STAGE_US=$STAGE_US \
-          BG_WORKERS=$BG \
-          "$ROOT/tests/synthetic/run_fcp_frame_bench.sh" >>"$LOG" 2>&1 || die "run failed $policy run=$r"
-        log "done cpus=$c topo=$t policy=$policy run=$r"
+        if [ "$BENCH" = fcp ] || [ "$BENCH" = all ]; then
+          if [ "$BENCH" = all ]; then fcp_root=$dest/fcp; else fcp_root=$dest; fi
+          TARGET=device \
+            SERIAL=$SERIAL \
+            ADB=$ADB \
+            BIN_DIR=$BIN_DIR \
+            RESULTS_ROOT="$fcp_root" \
+            SCHEDULER_LABEL="$policy" \
+            FRAMES=$FRAMES \
+            HZ=$HZ \
+            STAGES=$STAGES \
+            STAGE_US=$STAGE_US \
+            BG_WORKERS=$BG \
+            "$ROOT/tests/synthetic/run_fcp_frame_bench.sh" >>"$LOG" 2>&1 || die "fcp run failed $policy run=$r"
+          log "done bench=fcp cpus=$c topo=$t policy=$policy run=$r"
+        fi
+        if [ "$BENCH" = schbench ] || [ "$BENCH" = all ]; then
+          if [ "$BENCH" = all ]; then schbench_root=$dest/schbench; else schbench_root=$dest; fi
+          TARGET=device \
+            SERIAL=$SERIAL \
+            ADB=$ADB \
+            BIN_DIR=$BIN_DIR \
+            RESULTS_ROOT="$schbench_root" \
+            SCHEDULER_LABEL="$policy" \
+            SCHBENCH_THREADS="$SCHBENCH_THREADS" \
+            SCHBENCH_ARGS="$SCHBENCH_ARGS" \
+            "$ROOT/tests/synthetic/run_schbench.sh" >>"$LOG" 2>&1 || die "schbench run failed $policy run=$r"
+          log "done bench=schbench cpus=$c topo=$t policy=$policy run=$r"
+        fi
       done
       stop_sched
     }
@@ -182,6 +213,7 @@ frames_per_run: $FRAMES
 hz: $HZ
 stages: $STAGES
 stage_us: $STAGE_US
+bench: $BENCH
 policies: $NORMAL_POLICIES eevdf_proxy_exec(optional)
 results: $OUT
 EOF
