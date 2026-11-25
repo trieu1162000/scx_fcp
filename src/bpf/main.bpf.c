@@ -22,6 +22,7 @@ const volatile bool preempt_on_crit_wakeup = true;
 
 const volatile u64 cpu_capacity[MAX_CPUS];
 const volatile u8 is_big_core[MAX_CPUS];
+const volatile u8 has_little_cores = 1;
 
 volatile u64 vtime_now;
 
@@ -773,6 +774,12 @@ static __always_inline s32 get_cluster_home_cpu(struct task_struct *p,
 	u32 mask = 15;
 	s32 cpu;
 
+	if (!has_little_cores && nr_cpu_ids > 0) {
+		cpu = (s32)((u32)p->pid % nr_cpu_ids);
+		if (cpu >= 0 && cpu < MAX_CPUS && bpf_cpumask_test_cpu(cpu, p->cpus_ptr))
+			return cpu;
+		return scx_bpf_task_cpu(p);
+	}
 	if (half <= 2) {
 		half = 2;
 		mask = 1;
@@ -819,7 +826,7 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 	    bpf_cpumask_test_cpu(prev_cpu, idle_cpumask)) {
 		bool prev_is_big = cpu_is_big(prev_cpu);
 
-		if ((want_big && prev_is_big) || (!want_big && !prev_is_big)) {
+		if ((want_big && prev_is_big) || (!want_big && (!prev_is_big || !has_little_cores))) {
 			if (scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
 				scx_bpf_put_cpumask(idle_cpumask);
 				*direct_idle = true;
