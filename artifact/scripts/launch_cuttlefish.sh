@@ -23,6 +23,13 @@
 #   AOSP_OUT       optional AOSP product output directory for APK copies
 set -euo pipefail
 
+# Ensure cvdnetwork and kvm supplementary groups are active even in non-login shells.
+if [ "${_CF_GROUPS_READY:-0}" != "1" ] && ! id -Gn | grep -qw cvdnetwork; then
+  if sudo -n true >/dev/null 2>&1; then
+    exec sudo -n -E setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+      env _CF_GROUPS_READY=1 bash "$0" "$@"
+  fi
+fi
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ARTIFACT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 [ -f "$ARTIFACT_DIR/config.env" ] && . "$ARTIFACT_DIR/config.env"
@@ -55,6 +62,7 @@ DL_RUNTIME_NS=${DL_RUNTIME_NS:-892000}
 DL_PERIOD_NS=${DL_PERIOD_NS:-2000000}
 DL_DEADLINE_NS=${DL_DEADLINE_NS:-$DL_PERIOD_NS}
 SERIAL=${SERIAL:-127.0.0.1:6520}
+export ANDROID_ADB_SERVER_PORT=${ANDROID_ADB_SERVER_PORT:-5038}
 PROXY_EXEC=${PROXY_EXEC:-0}
 STOP_EXISTING=${STOP_EXISTING:-1}
 STAGE_DEVICE=${STAGE_DEVICE:-1}
@@ -108,8 +116,11 @@ for dev in /dev/kvm /dev/vhost-vsock /dev/vhost-net /dev/net/tun; do
 done
 
 if [ "$STOP_EXISTING" = 1 ]; then
-  HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd" >/dev/null 2>&1 || true
+  (ulimit -c 0; HOME="$CF_HOME" "$CF_HOME/bin/stop_cvd" >/dev/null 2>&1) || true
+  pkill -TERM -f "$CF_HOME/bin/run_cvd" >/dev/null 2>&1 || true
   sleep 2
+  pkill -KILL -f "$CF_HOME/bin/(run_cvd|process_restarter|x86_64-linux-gnu/crosvm|modem_simulator|netsimd|wmediumd|webRTC|webrtc_operator|adb_connector|socket_vsock_proxy|casimir|secure_env|sensors_simulator|openwrt_control_server)" >/dev/null 2>&1 || true
+  sleep 1
 fi
 
 cd "$CF_HOME"
@@ -186,17 +197,12 @@ sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
 if [ "$STAGE_DEVICE" = 1 ]; then
   sh_ "mkdir -p '$REMOTE_DIR' '$REMOTE_DIR/stats'" >/dev/null 2>&1 || true
   if [ -d "$BIN_DIR" ]; then
-    for bin in "$BIN_DIR"/scx_* "$BIN_DIR"/fcp_frame_bench; do
+    for bin in "$BIN_DIR"/scx_* "$BIN_DIR"/fcp_frame_bench "$BIN_DIR"/schbench; do
       [ -f "$bin" ] || continue
       "$ADB" -s "$SERIAL" push "$bin" "$REMOTE_DIR/$(basename "$bin")" >/dev/null
       sh_ "chmod 755 '$REMOTE_DIR/$(basename "$bin")'" >/dev/null 2>&1 || true
       echo "staged binary: $REMOTE_DIR/$(basename "$bin")"
     done
-    # Also create the legacy alias expected by run_full_matrix_14.sh when scx_fcp_behavioral is present
-    if [ -f "$BIN_DIR/scx_fcp_behavioral" ]; then
-      sh_ "cp -f '$REMOTE_DIR/scx_fcp_behavioral' '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms' && \
-        chmod 755 '$REMOTE_DIR/scx_fcp_v_a_depth3_tgid1ms'" >/dev/null 2>&1 || true
-    fi
   fi
   mkdir -p "$WORKLOADS_DIR"
   if [ -n "$AOSP_OUT" ]; then
@@ -226,7 +232,7 @@ fi
 #           remaining vCPUs. 892us / 2000us = 44.6%, matching the 446/1024
 #           asymmetric capacity ratio. This is a host-side emulation, not a
 #           hardware model; record the chosen mode in every result manifest.
-TOPO=${TOPO:-asym}
+TOPO=${TOPO:-dl}
 HALF=$((CPUS / 2))
 
 # crosvm's vCPU threads have comm names such as crosvm_vcpu0, so

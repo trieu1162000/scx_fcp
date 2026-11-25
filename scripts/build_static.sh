@@ -23,7 +23,7 @@ SCX_SUB=${SCX_SUB:-$SCX_ROOT/scheds/rust/scx_fcp}
 BIN_DIR=${BIN_DIR:-$REPO_ROOT/build/bin}
 LOG_DIR=${LOG_DIR:-$REPO_ROOT/build/logs}
 TARGET=${TARGET:-x86_64-unknown-linux-gnu}
-PROFILES=${PROFILES:-"default named zero-hint"}
+PROFILES=${PROFILES:-"default named zero-hint no-token no-fanout"}
 BUILD_BASELINES=${BUILD_BASELINES:-0}
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
 STRICT_SOURCE=${STRICT_SOURCE:-0}
@@ -137,12 +137,18 @@ install_bin() {
 build_profile() {
     local profile=$1
     local name=$2
-    local env_profile=$profile
-    [ "$profile" = default ] && env_profile=""
+    local env_profile=""
+    local extra_env=()
+    case "$profile" in
+        default) ;;
+        named|zero-hint|oracle) env_profile=$profile ;;
+        no-token) extra_env+=(SCX_FCP_NO_TOKEN=1) ;;
+        no-fanout) extra_env+=(SCX_FCP_NO_FANOUT_CAP=1) ;;
+    esac
     echo "build_static: profile $profile -> $BIN_DIR/$name"
     touch "$SCX_SUB/src/bpf/main.bpf.c"
     run_logged "$LOG_DIR/build-fcp-$profile.log" \
-        env SCX_FCP_BUILD="$env_profile" \
+        env SCX_FCP_BUILD="$env_profile" "${extra_env[@]}" \
         cargo build --locked --manifest-path "$SCX_ROOT/Cargo.toml" \
         --release --target "$TARGET" -j "$JOBS" -p scx_fcp
     install_bin "$SCX_ROOT/target/$TARGET/release/scx_fcp" "$name"
@@ -172,24 +178,51 @@ for profile in $PROFILES; do
         default) build_profile default scx_fcp ;;
         named) build_profile named scx_fcp_named ;;
         zero-hint|behavioral) build_profile zero-hint scx_fcp_behavioral ;;
+        no-token) build_profile no-token scx_fcp_notoken ;;
+        no-fanout) build_profile no-fanout scx_fcp_nofanout ;;
         *) die "unknown profile $profile" ;;
     esac
 done
 
+BENCH_DIR="$SCX_SUB/tools/scx_fcp_bench"
+[ -d "$BENCH_DIR" ] || BENCH_DIR="$SCX_ROOT/tools/scx_fcp_bench"
 if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
-    BENCH_DIR="$SCX_SUB/tools/scx_fcp_bench"
-    [ -d "$BENCH_DIR" ] || BENCH_DIR="$SCX_ROOT/tools/scx_fcp_bench"
-    echo "build_static: building fcp_frame_bench in $BENCH_DIR"
-    make -C "$BENCH_DIR" clean >/dev/null 2>&1 || true
-    run_logged "$LOG_DIR/build-bench.log" \
-        make -C "$BENCH_DIR" \
-        CC="${CC:-cc}" \
-        CFLAGS="-O2 -g -Wall -Wextra -Werror -std=c11 -static" \
-        LDFLAGS="-pthread -lm"
-    install_bin "$BENCH_DIR/fcp_frame_bench" fcp_frame_bench
+    BENCH_CC=${BENCH_CC:-${CC:-cc}}
 else
-    echo "build_static: skipping host-only fcp_frame_bench for TARGET=$TARGET"
+    BENCH_CC=${BENCH_CC:-aarch64-linux-gnu-gcc}
 fi
+echo "build_static: building fcp_frame_bench with $BENCH_CC"
+make -C "$BENCH_DIR" clean >/dev/null 2>&1 || true
+run_logged "$LOG_DIR/build-bench.log" \
+    make -C "$BENCH_DIR" \
+    CC="$BENCH_CC" \
+    CFLAGS="-O2 -g -Wall -Wextra -Werror -std=c11 -static" \
+    LDFLAGS="-pthread -lm -static"
+install_bin "$BENCH_DIR/fcp_frame_bench" fcp_frame_bench
+
+if [ -f "$REPO_ROOT/tools/scx_fcp_bench/scx_detach.c" ]; then
+    echo "build_static: building scx_detach with $BENCH_CC"
+    run_logged "$LOG_DIR/build-scx-detach.log" \
+        "$BENCH_CC" -O2 -Wall -Wextra -Werror -std=c11 -static \
+        -o "$BIN_DIR/scx_detach" "$REPO_ROOT/tools/scx_fcp_bench/scx_detach.c"
+    chmod 0755 "$BIN_DIR/scx_detach"
+fi
+
+SCHBENCH_DIR="$REPO_ROOT/tools/schbench"
+[ -d "$SCHBENCH_DIR" ] || die "missing schbench source: $SCHBENCH_DIR"
+if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
+    SCHBENCH_CC=${SCHBENCH_CC:-${CC:-cc}}
+else
+    SCHBENCH_CC=${SCHBENCH_CC:-aarch64-linux-gnu-gcc}
+fi
+echo "build_static: building schbench with $SCHBENCH_CC"
+make -C "$SCHBENCH_DIR" clean >/dev/null 2>&1 || true
+run_logged "$LOG_DIR/build-schbench.log" \
+    make -C "$SCHBENCH_DIR" \
+    CC="$SCHBENCH_CC" \
+    CFLAGS="-O2 -g -static" \
+    LDFLAGS="-pthread -lm"
+install_bin "$SCHBENCH_DIR/schbench" schbench
 
 for bin in "$BIN_DIR"/*; do
     [ -f "$bin" ] || continue

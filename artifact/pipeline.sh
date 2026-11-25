@@ -1,47 +1,36 @@
 #!/usr/bin/env bash
-# Single entrypoint for the scx_fcp artifact.
+# Unified CLI entrypoint for building, launching, running, and analyzing scx_fcp benchmarks.
 set -euo pipefail
 
 ARTIFACT=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$ARTIFACT/.." && pwd)
+SCRIPTS="$ARTIFACT/scripts"
+
 if [ -f "$ARTIFACT/config.env" ]; then
   set -a
   . "$ARTIFACT/config.env"
   set +a
-
-  echo "============================================"
-  echo "CONFIG_FILE=$ARTIFACT/config.env"
-  for var in $(grep -E '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=' "$ARTIFACT/config.env" | sed -E 's/^export[[:space:]]+//' | cut -d= -f1); do
-    echo "$var=${!var}"
-  done
-  echo "============================================"
 fi
-ROOT=$(cd "$ARTIFACT/.." && pwd)
-SCRIPTS="$ARTIFACT/scripts"
-INTERNAL="$SCRIPTS/internal"
 
 usage() {
   cat <<'EOF'
 Usage: ./artifact/pipeline.sh <command> [options]
 
 Commands:
-  build                 build scheduler for the selected platform
-  launch                launch Cuttlefish or prepare the configured device
-  smoke                 one JankBench ID across supported policies
-  full [--quick]        full 14-test matrix; --quick = smoke one cell
-  overhead [--quick]    eBPF-overhead; default suite=all
-                        --suite jankbench|uibench|all
-                        --quick = one cross-check run
-  overhead-analyze DIR  aggregate per-run bpf_overhead.json files
-  resume --out DIR      resume an existing full campaign
-  analyze DIR           integrate a full campaign (optional --out-dir DIR)
-  help                  this message
-
-Environment:
-  PLATFORM              x86_64 (default) or arm64
-  SCX_ROOT, BIN_DIR     scheduler source/build paths
-  CF_HOME, KERNEL, INITRAMFS, SERIAL
-  CPUS, MEMORY_MB
-  OUT                   campaign output directory
+  build                      Build static scx_fcp profiles, baselines, fcp_frame_bench, schbench
+  launch                     Launch Cuttlefish (PLATFORM=x86_64) or stage physical device (PLATFORM=arm64)
+  smoke [--out DIR]          Fast end-to-end validation across policies (micro + JankBench ID 0)
+  micro [options]            Multi-core scaling microbenchmark suite (fcp_frame_bench + schbench)
+                             Options: --cpus "4 8 16 32" --topos "sym dl" --runs 10 --suite fcp|schbench|all --quick --resume --out DIR
+  macro [options]            Full 14-test AOSP macro suite (8 JankBench + 6 UiBenchJankTests)
+  full  [options]            Alias for macro
+                             Options: --topo dl|sym --runs 10 --bg-workers N --suite all|jankbench|uibench --quick --resume --out DIR
+  overhead [options]         Isolated bpf_stats_enabled=1 eBPF struct_ops runtime overhead suite
+                             Options: --topo dl|sym --runs 5 --suite all|jankbench|uibench --quick --resume --out DIR
+  ablation [options]         Component ablation suite on JankBench (notoken, nofanout, behavioral, full)
+                             Options: --topo dl --runs 10 --quick --resume --out DIR
+  analyze DIR [--export DIR] Validate raw campaign(s), verify statistical invariants, and emit JSON/LaTeX summaries
+  help                       Show this message
 EOF
 }
 
@@ -51,121 +40,27 @@ shift || true
 case "$cmd" in
   build)
     export BUILD_BASELINES=${BUILD_BASELINES:-1}
-    export BIN_DIR=${BIN_DIR:-$ARTIFACT/build/bin}
+    export BIN_DIR=${BIN_DIR:-$ARTIFACT/build/bin/$PLATFORM}
     exec "$ROOT/scripts/build_static.sh" "$@"
     ;;
   launch)
     case "$PLATFORM" in
       x86_64) exec "$SCRIPTS/launch_cuttlefish.sh" "$@" ;;
-      arm64) exec "$SCRIPTS/launch_device.sh" "$@" ;;
+      arm64)  exec "$SCRIPTS/launch_device.sh" "$@" ;;
       *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
     esac
     ;;
-  smoke)
-    OUT=${OUT:-"$ARTIFACT/results/smoke_${PLATFORM}_$(date +%Y%m%d-%H%M%S)"}
-    if [ "$PLATFORM" = x86_64 ]; then
-      export OUT
-      exec "$INTERNAL/run_full_matrix_14.sh" --smoke --out "$OUT" --runs 1 --jank-tests 0 --skip-uibench "$@"
-    elif [ "$PLATFORM" = arm64 ]; then
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          --out) OUT=${2:?missing --out directory}; shift 2 ;;
-          *) echo "unknown arm64 smoke argument: $1" >&2; exit 2 ;;
-        esac
-      done
-      [ ! -e "$OUT" ] || { echo "error: smoke output already exists: $OUT" >&2; exit 2; }
-      export OUT
-      "$SCRIPTS/launch_device.sh"
-      DEVICE_POLICIES=(eevdf scx_fcp scx_fcp_v_a_depth3_tgid1ms scx_p2dq_pelt_off scx_lavd)
-      for policy in "${DEVICE_POLICIES[@]}"; do
-        BM_ID=0 RUN_COUNT=1 REBOOT=0 RESULTS_ROOT="$OUT" BIN_DIR="$BIN_DIR" \
-          SERIAL="$SERIAL" ADB="$ADB" \
-          bash "$ROOT/tests/jankbench/run_jankbench.sh" -p "$policy" -n 1
-      done
-      python3 "$ROOT/tests/jankbench/summarize_jankbench.py" "$OUT" --out-dir "$OUT"
-      python3 - "$OUT/summary.json" "$OUT" <<'PY'
-import json, sys
-summary = json.load(open(sys.argv[1], encoding="utf-8"))
-out = sys.argv[2]
-expected = {
-    "eevdf": ("disabled", None),
-    "scx_fcp": ("enabled", "fcp"),
-    "scx_fcp_v_a_depth3_tgid1ms": ("enabled", "fcp_zh"),
-    "scx_p2dq_pelt_off": ("enabled", "p2dq"),
-    "scx_lavd": ("enabled", "lavd"),
-}
-
-def ops_match(actual, prefix):
-    if not isinstance(actual, str):
-        return False
-    if prefix == "fcp":
-        return actual == "fcp" or (
-            actual.startswith("fcp_") and not actual.startswith(("fcp_nh_", "fcp_zh_")))
-    return actual == prefix or actual.startswith(prefix + "_")
-
-details = []
-for policy, (state, ops) in expected.items():
-    rows = [row for row in summary.get("runs", [])
-            if row.get("policy") == policy and str(row.get("run")) == "1"]
-    if len(rows) != 1 or not rows[0].get("valid") or not rows[0].get("frames"):
-        raise SystemExit(f"DEVICE_SMOKE_FAIL: {policy} result is invalid")
-    path = f"{out}/{policy}/run-1/manifest.json"
-    manifest = json.load(open(path, encoding="utf-8"))
-    if manifest.get("policy") != policy or manifest.get("run_count") != 1 or \
-            "EXTRA_ENABLED_BENCHMARK_IDS 0" not in manifest.get("benchmark_command", ""):
-        raise SystemExit(f"DEVICE_SMOKE_FAIL: {policy} protocol mismatch")
-    if manifest.get("scx_state_before") != state or \
-            manifest.get("scx_state_during") != state:
-        raise SystemExit(f"DEVICE_SMOKE_FAIL: {policy} scheduler was not active throughout the run")
-    ops_before = manifest.get("scx_ops_before")
-    ops_during = manifest.get("scx_ops_during")
-    if ops is not None and (not ops_match(ops_before, ops) or not ops_match(ops_during, ops)):
-        raise SystemExit(f"DEVICE_SMOKE_FAIL: {policy} scheduler ops did not match")
-    log_path = f"{out}/{policy}/run-1/scheduler.log"
-    if ops is not None and not open(log_path, encoding="utf-8").read().strip():
-        raise SystemExit(f"DEVICE_SMOKE_FAIL: {policy} has no scheduler log evidence")
-    details.append(
-        f"{policy}(state={manifest['scx_state_during']},ops={ops_during or 'none'},"
-        f"frames={rows[0]['frames']},log={log_path if ops is not None else 'no-sched-ext'})")
-print("DEVICE_SMOKE_VALID: " + " ".join(details))
-PY
-    else
-      echo "unsupported PLATFORM: $PLATFORM" >&2
-      exit 2
-    fi
+  smoke|micro|macro|overhead|ablation)
+    exec python3 "$SCRIPTS/harness.py" "$cmd" "$@"
     ;;
   full)
-    case "$PLATFORM" in
-      x86_64) exec "$INTERNAL/run_full_matrix_14.sh" "$@" ;;
-      arm64)
-        "$SCRIPTS/launch_device.sh"
-        exec "$INTERNAL/run_full_matrix_14.sh" "$@"
-        ;;
-      *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
-    esac
-    ;;
-  overhead)
-    exec "$INTERNAL/run_bpf_overhead.sh" "$@"
-    ;;
-  overhead-analyze)
-    exec python3 "$INTERNAL/aggregate_bpf_overhead.py" "$@"
+    exec python3 "$SCRIPTS/harness.py" macro "$@"
     ;;
   resume)
-    case "$PLATFORM" in
-      x86_64) exec "$INTERNAL/run_full_matrix_14.sh" --resume "$@" ;;
-      arm64)
-        "$SCRIPTS/launch_device.sh"
-        exec "$INTERNAL/run_full_matrix_14.sh" --resume "$@"
-        ;;
-      *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
-    esac
+    exec python3 "$SCRIPTS/harness.py" macro --resume "$@"
     ;;
-  analyze)
-    case "$PLATFORM" in
-      x86_64) exec python3 "$INTERNAL/integrate_full14.py" "$@" ;;
-      arm64) exec python3 "$INTERNAL/integrate_full14.py" --policies "$POLICIES" "$@" ;;
-      *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
-    esac
+  analyze|overhead-analyze)
+    exec python3 "$SCRIPTS/analyze.py" "$@"
     ;;
   help|-h|--help)
     usage
