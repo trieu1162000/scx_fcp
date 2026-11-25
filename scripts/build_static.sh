@@ -200,6 +200,14 @@ run_logged "$LOG_DIR/build-bench.log" \
     LDFLAGS="-pthread -lm -static"
 install_bin "$BENCH_DIR/fcp_frame_bench" fcp_frame_bench
 
+if [ -f "$REPO_ROOT/tools/scx_fcp_bench/scx_detach.c" ]; then
+    echo "build_static: building scx_detach with $BENCH_CC"
+    run_logged "$LOG_DIR/build-scx-detach.log" \
+        "$BENCH_CC" -O2 -Wall -Wextra -Werror -std=c11 -static \
+        -o "$BIN_DIR/scx_detach" "$REPO_ROOT/tools/scx_fcp_bench/scx_detach.c"
+    chmod 0755 "$BIN_DIR/scx_detach"
+fi
+
 SCHBENCH_DIR="$REPO_ROOT/tools/schbench"
 [ -d "$SCHBENCH_DIR" ] || die "missing schbench source: $SCHBENCH_DIR"
 if [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
