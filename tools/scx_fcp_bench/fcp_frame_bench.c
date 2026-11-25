@@ -19,6 +19,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -45,6 +46,8 @@ struct options {
 	unsigned little_power_mw;
 	unsigned big_power_mw;
 	bool anonymous_comms;
+	bool bg_only;
+	const char *big_cpus;
 	const char *scheduler;
 };
 
@@ -60,9 +63,19 @@ struct pipeline {
 	uint64_t stage_big_samples[MAX_STAGES];
 	uint64_t stage_gold_samples[MAX_STAGES];
 	uint64_t stage_prime_samples[MAX_STAGES];
+	uint64_t iters_per_us;
 	unsigned cpu_cap[128];
+	bool is_big_cpu[128];
 	unsigned cpu_count;
 };
+
+static volatile sig_atomic_t g_sig_stop = 0;
+
+static void handle_sig(int sig)
+{
+	(void)sig;
+	g_sig_stop = 1;
+}
 
 static uint64_t now_ns(clockid_t clock_id)
 {
@@ -101,16 +114,49 @@ static void wait_for_sequence(_Atomic int *word, int sequence)
 	}
 }
 
-static void busy_for_ns(uint64_t duration_ns)
+static void do_work_iters(uint64_t iters)
 {
-	uint64_t end = now_ns(CLOCK_MONOTONIC_RAW) + duration_ns;
-	volatile uint64_t accumulator = 0;
+	volatile uint64_t accumulator = 1ULL;
 
-	while (now_ns(CLOCK_MONOTONIC_RAW) < end) {
+	for (uint64_t i = 0; i < iters; i++) {
 		accumulator = accumulator * 1664525ULL + 1013904223ULL;
 		accumulator ^= accumulator >> 13;
 	}
 	(void)accumulator;
+}
+
+static uint64_t calibrate_iters_per_us(unsigned calib_cpu)
+{
+	cpu_set_t orig_mask, cal_mask;
+	bool pinned = false;
+	uint64_t calib_iters = 4000000ULL;
+	uint64_t t0, t1, elapsed_ns, rate;
+
+	if (sched_getaffinity(0, sizeof(orig_mask), &orig_mask) == 0) {
+		CPU_ZERO(&cal_mask);
+		CPU_SET(calib_cpu, &cal_mask);
+		if (sched_setaffinity(0, sizeof(cal_mask), &cal_mask) == 0)
+			pinned = true;
+	}
+
+	do_work_iters(500000ULL);
+	t0 = now_ns(CLOCK_THREAD_CPUTIME_ID);
+	do_work_iters(calib_iters);
+	t1 = now_ns(CLOCK_THREAD_CPUTIME_ID);
+	elapsed_ns = (t1 > t0) ? (t1 - t0) : 1ULL;
+	if (elapsed_ns < 5000000ULL) {
+		calib_iters *= 8ULL;
+		t0 = now_ns(CLOCK_THREAD_CPUTIME_ID);
+		do_work_iters(calib_iters);
+		t1 = now_ns(CLOCK_THREAD_CPUTIME_ID);
+		elapsed_ns = (t1 > t0) ? (t1 - t0) : 1ULL;
+	}
+
+	if (pinned)
+		(void)sched_setaffinity(0, sizeof(orig_mask), &orig_mask);
+
+	rate = (calib_iters * 1000ULL) / elapsed_ns;
+	return rate < 10ULL ? 10ULL : rate;
 }
 
 static void set_thread_name(const char *name)
@@ -143,26 +189,34 @@ static void *stage_main(void *arg)
 	for (unsigned frame = 1; frame <= p->opts.frames; frame++) {
 		uint64_t before_cpu;
 		uint64_t after_cpu;
-		int cpu;
+		uint64_t total_iters = p->iters_per_us * (uint64_t)p->opts.stage_us;
+		const unsigned slices = 16U;
+		uint64_t base_slice = total_iters / slices;
+		uint64_t rem_slice = total_iters % slices;
 
 		wait_for_sequence(&p->trigger[stage], (int)frame);
 		before_cpu = now_ns(CLOCK_THREAD_CPUTIME_ID);
-		busy_for_ns((uint64_t)p->opts.stage_us * NS_PER_US);
-		after_cpu = now_ns(CLOCK_THREAD_CPUTIME_ID);
-		p->stage_cpu_ns[stage] += after_cpu - before_cpu;
+		for (unsigned s = 0; s < slices; s++) {
+			uint64_t chunk = base_slice + (s + 1 == slices ? rem_slice : 0ULL);
+			int cpu;
 
-		cpu = sched_getcpu();
-		if (cpu >= 0 && (unsigned)cpu < p->cpu_count) {
-			if ((unsigned)cpu < p->cpu_count / 2) {
-				p->stage_little_samples[stage]++;
-			} else {
-				p->stage_big_samples[stage]++;
-				if (cpu < 128 && p->cpu_cap[cpu] >= 1000)
-					p->stage_prime_samples[stage]++;
-				else
-					p->stage_gold_samples[stage]++;
+			if (chunk > 0)
+				do_work_iters(chunk);
+			cpu = sched_getcpu();
+			if (cpu >= 0 && (unsigned)cpu < p->cpu_count && cpu < 128) {
+				if (!p->is_big_cpu[cpu]) {
+					p->stage_little_samples[stage]++;
+				} else {
+					p->stage_big_samples[stage]++;
+					if (p->cpu_cap[cpu] >= 1000)
+						p->stage_prime_samples[stage]++;
+					else
+						p->stage_gold_samples[stage]++;
+				}
 			}
 		}
+		after_cpu = now_ns(CLOCK_THREAD_CPUTIME_ID);
+		p->stage_cpu_ns[stage] += after_cpu - before_cpu;
 
 		if (stage + 1 < p->opts.stages) {
 			atomic_store_explicit(&p->trigger[stage + 1], (int)frame,
@@ -180,10 +234,14 @@ static void *stage_main(void *arg)
 static void *background_main(void *arg)
 {
 	struct pipeline *p = arg;
+	uint64_t bg_chunk = p->iters_per_us * 200ULL;
+
+	if (bg_chunk < 1000ULL)
+		bg_chunk = 1000ULL;
 	set_thread_name(p->opts.anonymous_comms ? "anon_bg" : "fcp_background");
 
 	while (!atomic_load_explicit(&p->stop, memory_order_relaxed))
-		busy_for_ns(200000ULL);
+		do_work_iters(bg_chunk);
 	return NULL;
 }
 
@@ -236,9 +294,11 @@ static void usage(const char *program)
 		"  --scheduler NAME       label in JSON output (default: unknown)\n"
 		"  --frames N             frame count (default: 120)\n"
 		"  --hz N                 display rate, 60, 90, or 120 (default: 60)\n"
-		"  --stage-us N           busy time per stage (default: 700)\n"
+		"  --stage-us N           calibrated big-core work per stage in us (default: 700)\n"
 		"  --stages N             synchronous stages, 1..4 (default: 4)\n"
-		"  --bg-workers N         background CPU workers (default: 2)\n"
+		"  --bg-workers N         background CPU workers, 0..32 (default: 2)\n"
+		"  --big-cpus LIST        comma-separated big CPU IDs (optional)\n"
+		"  --bg-only              run only background workers until SIGINT/SIGTERM\n"
 		"  --little-power-mw N    energy estimate (default: 450)\n"
 		"  --big-power-mw N       energy estimate (default: 1400)\n"
 		"  --anonymous-comms      use generic thread names (anon_s0..3, anon_bg)\n",
@@ -254,6 +314,8 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		{"stage-us", required_argument, NULL, 'u'},
 		{"stages", required_argument, NULL, 't'},
 		{"bg-workers", required_argument, NULL, 'b'},
+		{"big-cpus", required_argument, NULL, 'c'},
+		{"bg-only", no_argument, NULL, 'o'},
 		{"little-power-mw", required_argument, NULL, 'l'},
 		{"big-power-mw", required_argument, NULL, 'g'},
 		{"anonymous-comms", no_argument, NULL, 'a'},
@@ -270,6 +332,8 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		.little_power_mw = 450,
 		.big_power_mw = 1400,
 		.anonymous_comms = false,
+		.bg_only = false,
+		.big_cpus = NULL,
 		.scheduler = "unknown",
 	};
 
@@ -293,6 +357,12 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		case 'b':
 			opts->bg_workers = (unsigned)strtoul(optarg, NULL, 10);
 			break;
+		case 'c':
+			opts->big_cpus = optarg;
+			break;
+		case 'o':
+			opts->bg_only = true;
+			break;
 		case 'l':
 			opts->little_power_mw = (unsigned)strtoul(optarg, NULL, 10);
 			break;
@@ -308,8 +378,9 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		}
 	}
 
-	if (!opts->frames || !opts->hz || opts->stages == 0 ||
-	    opts->stages > MAX_STAGES || opts->bg_workers > MAX_BG_WORKERS) {
+	if ((!opts->bg_only && (!opts->frames || !opts->hz || opts->stages == 0 ||
+				opts->stages > MAX_STAGES)) ||
+	    opts->bg_workers > MAX_BG_WORKERS) {
 		usage(argv[0]);
 		exit(EXIT_FAILURE);
 	}
@@ -341,27 +412,80 @@ int main(int argc, char **argv)
 	if (!p.cpu_count)
 		p.cpu_count = 1;
 	p.opts = opts;
-	for (unsigned c = 0; c < p.cpu_count && c < 128; c++) {
-		char cap_path[128], cap_buf[32];
-		int fd;
-		p.cpu_cap[c] = 1024;
-		snprintf(cap_path, sizeof(cap_path),
-			 "/sys/devices/system/cpu/cpu%u/cpu_capacity", c);
-		fd = open(cap_path, O_RDONLY | O_CLOEXEC);
-		if (fd >= 0) {
-			ssize_t n = read(fd, cap_buf, sizeof(cap_buf) - 1);
-			close(fd);
-			if (n > 0) {
-				cap_buf[n] = '\0';
-				p.cpu_cap[c] = (unsigned)strtoul(cap_buf, NULL, 10);
+	{
+		unsigned min_cap = ~0U, max_cap = 0U, calib_cpu = 0U;
+		for (unsigned c = 0; c < p.cpu_count && c < 128; c++) {
+			char cap_path[128], cap_buf[32];
+			int fd;
+			p.cpu_cap[c] = 1024;
+			snprintf(cap_path, sizeof(cap_path),
+				 "/sys/devices/system/cpu/cpu%u/cpu_capacity", c);
+			fd = open(cap_path, O_RDONLY | O_CLOEXEC);
+			if (fd >= 0) {
+				ssize_t n = read(fd, cap_buf, sizeof(cap_buf) - 1);
+				close(fd);
+				if (n > 0) {
+					cap_buf[n] = '\0';
+					p.cpu_cap[c] = (unsigned)strtoul(cap_buf, NULL, 10);
+				}
+			}
+			if (p.cpu_cap[c] < min_cap)
+				min_cap = p.cpu_cap[c];
+			if (p.cpu_cap[c] >= max_cap) {
+				max_cap = p.cpu_cap[c];
+				calib_cpu = c;
 			}
 		}
+		if (opts.big_cpus && opts.big_cpus[0] != '\0') {
+			const char *cur = opts.big_cpus;
+			while (*cur) {
+				char *end = NULL;
+				unsigned long id = strtoul(cur, &end, 10);
+				if (end == cur)
+					break;
+				if (id < p.cpu_count && id < 128) {
+					p.is_big_cpu[id] = true;
+					calib_cpu = (unsigned)id;
+				}
+				cur = (*end == ',') ? end + 1 : end;
+			}
+		} else if (max_cap > min_cap) {
+			unsigned thresh = (min_cap + max_cap) / 2U;
+			for (unsigned c = 0; c < p.cpu_count && c < 128; c++)
+				p.is_big_cpu[c] = (p.cpu_cap[c] >= thresh);
+		} else {
+			unsigned split = p.cpu_count >= 2 ? (p.cpu_count / 2U) : 0U;
+			for (unsigned c = 0; c < p.cpu_count && c < 128; c++)
+				p.is_big_cpu[c] = (c >= split);
+			calib_cpu = p.cpu_count - 1U;
+		}
+		p.iters_per_us = calibrate_iters_per_us(calib_cpu);
 	}
 	atomic_init(&p.frame_done, 0);
 	atomic_init(&p.stop, false);
 	for (unsigned i = 0; i < MAX_STAGES; i++)
 		atomic_init(&p.trigger[i], 0);
 
+	if (opts.bg_only) {
+		struct sigaction sa = {0};
+		sa.sa_handler = handle_sig;
+		sigaction(SIGINT, &sa, NULL);
+		sigaction(SIGTERM, &sa, NULL);
+		for (unsigned i = 0; i < opts.bg_workers; i++) {
+			int error = pthread_create(&p.bg_threads[i], NULL, background_main, &p);
+			if (error) {
+				errno = error;
+				perror("pthread_create");
+				return EXIT_FAILURE;
+			}
+		}
+		while (!g_sig_stop)
+			pause();
+		atomic_store_explicit(&p.stop, true, memory_order_release);
+		for (unsigned i = 0; i < opts.bg_workers; i++)
+			pthread_join(p.bg_threads[i], NULL);
+		return EXIT_SUCCESS;
+	}
 	durations = calloc(opts.frames, sizeof(*durations));
 	if (!durations) {
 		perror("calloc");
@@ -439,43 +563,56 @@ int main(int argc, char **argv)
 	for (unsigned i = 0; i < opts.stages; i++)
 		pthread_join(p.stage_threads[i], NULL);
 
-	for (unsigned i = 0; i < opts.stages; i++) {
-		critical_cpu_ns += p.stage_cpu_ns[i];
-		little_cpu_ns += p.stage_little_samples[i] * opts.stage_us * NS_PER_US;
-		big_cpu_ns += p.stage_big_samples[i] * opts.stage_us * NS_PER_US;
-		gold_samples += p.stage_gold_samples[i];
-		prime_samples += p.stage_prime_samples[i];
-	}
-	qsort(durations, opts.frames, sizeof(*durations), compare_u64);
-
 	{
-		double mean_ms = (double)total_ns / (double)opts.frames / 1000000.0;
-		double p50_ms = (double)percentile(durations, opts.frames, 0.50) /
-				1000000.0;
-		double p95_ms = (double)percentile(durations, opts.frames, 0.95) /
-				1000000.0;
-		double p99_ms = (double)percentile(durations, opts.frames, 0.99) /
-				1000000.0;
-		double energy_mj = ((double)little_cpu_ns * opts.little_power_mw +
-				   (double)big_cpu_ns * opts.big_power_mw) /
-				  (double)NS_PER_SEC;
+		uint64_t little_samples = 0;
+		uint64_t big_samples = 0;
+		uint64_t total_samples;
+		double big_res_pct;
+		double mean_ms, p50_ms, p95_ms, p99_ms, energy_mj;
+
+		for (unsigned i = 0; i < opts.stages; i++) {
+			critical_cpu_ns += p.stage_cpu_ns[i];
+			little_samples += p.stage_little_samples[i];
+			big_samples += p.stage_big_samples[i];
+			gold_samples += p.stage_gold_samples[i];
+			prime_samples += p.stage_prime_samples[i];
+		}
+		total_samples = little_samples + big_samples;
+		big_res_pct = total_samples > 0 ?
+			(100.0 * (double)big_samples / (double)total_samples) : 0.0;
+		little_cpu_ns = total_samples > 0 ?
+			(uint64_t)((double)critical_cpu_ns * ((double)little_samples / (double)total_samples)) : 0ULL;
+		big_cpu_ns = critical_cpu_ns > little_cpu_ns ? (critical_cpu_ns - little_cpu_ns) : 0ULL;
+
+		qsort(durations, opts.frames, sizeof(*durations), compare_u64);
+		mean_ms = (double)total_ns / (double)opts.frames / 1000000.0;
+		p50_ms = (double)percentile(durations, opts.frames, 0.50) / 1000000.0;
+		p95_ms = (double)percentile(durations, opts.frames, 0.95) / 1000000.0;
+		p99_ms = (double)percentile(durations, opts.frames, 0.99) / 1000000.0;
+		energy_mj = ((double)little_cpu_ns * opts.little_power_mw +
+			     (double)big_cpu_ns * opts.big_power_mw) / (double)NS_PER_SEC;
 
 		printf("{\"scheduler\":\"%s\",\"frames\":%u,\"hz\":%u,"
 		       "\"stages\":%u,\"stage_us\":%u,\"bg_workers\":%u,"
+		       "\"iters_per_us\":%llu,"
 		       "\"mean_ms\":%.3f,\"p50_ms\":%.3f,\"p95_ms\":%.3f,"
 		       "\"p99_ms\":%.3f,\"jank60_pct\":%.3f,\"jank90_pct\":%.3f,\"jank120_pct\":%.3f,"
+		       "\"big_residency_pct\":%.2f,"
 		       "\"little_stage_samples\":%llu,\"big_stage_samples\":%llu,"
 		       "\"gold_stage_samples\":%llu,\"prime_stage_samples\":%llu,"
 		       "\"critical_cpu_ms\":%.3f,\"energy_mj_per_frame\":%.3f,"
 		       "\"thermal_samples\":%u,\"thermal_hot_samples\":%u,"
 		       "\"thermal_hot_ms\":%.3f,\"cpu_count\":%u}\n",
 		       opts.scheduler, opts.frames, opts.hz, opts.stages,
-		       opts.stage_us, opts.bg_workers, mean_ms, p50_ms, p95_ms,
-		       p99_ms, 100.0 * (double)jank60 / opts.frames,
+		       opts.stage_us, opts.bg_workers,
+		       (unsigned long long)p.iters_per_us,
+		       mean_ms, p50_ms, p95_ms, p99_ms,
+		       100.0 * (double)jank60 / opts.frames,
 		       100.0 * (double)jank90 / opts.frames,
 		       100.0 * (double)jank120 / opts.frames,
-		       (unsigned long long)(little_cpu_ns / (opts.stage_us * NS_PER_US)),
-		       (unsigned long long)(big_cpu_ns / (opts.stage_us * NS_PER_US)),
+		       big_res_pct,
+		       (unsigned long long)little_samples,
+		       (unsigned long long)big_samples,
 		       (unsigned long long)gold_samples,
 		       (unsigned long long)prime_samples,
 		       (double)critical_cpu_ns / 1000000.0, energy_mj / opts.frames,
