@@ -23,7 +23,7 @@ SCX_SUB=${SCX_SUB:-$SCX_ROOT/scheds/rust/scx_fcp}
 BIN_DIR=${BIN_DIR:-$REPO_ROOT/build/bin}
 LOG_DIR=${LOG_DIR:-$REPO_ROOT/build/logs}
 TARGET=${TARGET:-x86_64-unknown-linux-gnu}
-PROFILES=${PROFILES:-"default named zero-hint"}
+PROFILES=${PROFILES:-"default named zero-hint no-token no-fanout"}
 BUILD_BASELINES=${BUILD_BASELINES:-0}
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
 STRICT_SOURCE=${STRICT_SOURCE:-0}
@@ -137,12 +137,18 @@ install_bin() {
 build_profile() {
     local profile=$1
     local name=$2
-    local env_profile=$profile
-    [ "$profile" = default ] && env_profile=""
+    local env_profile=""
+    local extra_env=()
+    case "$profile" in
+        default) ;;
+        named|zero-hint|oracle) env_profile=$profile ;;
+        no-token) extra_env+=(SCX_FCP_NO_TOKEN=1) ;;
+        no-fanout) extra_env+=(SCX_FCP_NO_FANOUT_CAP=1) ;;
+    esac
     echo "build_static: profile $profile -> $BIN_DIR/$name"
     touch "$SCX_SUB/src/bpf/main.bpf.c"
     run_logged "$LOG_DIR/build-fcp-$profile.log" \
-        env SCX_FCP_BUILD="$env_profile" \
+        env SCX_FCP_BUILD="$env_profile" "${extra_env[@]}" \
         cargo build --locked --manifest-path "$SCX_ROOT/Cargo.toml" \
         --release --target "$TARGET" -j "$JOBS" -p scx_fcp
     install_bin "$SCX_ROOT/target/$TARGET/release/scx_fcp" "$name"
@@ -172,6 +178,8 @@ for profile in $PROFILES; do
         default) build_profile default scx_fcp ;;
         named) build_profile named scx_fcp_named ;;
         zero-hint|behavioral) build_profile zero-hint scx_fcp_behavioral ;;
+        no-token) build_profile no-token scx_fcp_notoken ;;
+        no-fanout) build_profile no-fanout scx_fcp_nofanout ;;
         *) die "unknown profile $profile" ;;
     esac
 done

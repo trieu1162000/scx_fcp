@@ -563,7 +563,7 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 	if (!waker || waker->pid == p->pid || (waker->flags & PF_KTHREAD))
 		return;
 
-#ifndef SCX_FCP_ZERO_HINT
+#if !defined(SCX_FCP_ZERO_HINT) && !defined(SCX_FCP_NO_FANOUT_CAP)
 	if (is_render_pool_comm(p->comm) || is_angle_worker_comm(p->comm) ||
 	    is_bg_worker_comm(p->comm))
 		return;
@@ -607,14 +607,21 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 		return;
 	}
 
+#ifdef SCX_FCP_NO_TOKEN
+	(void)allow_inherit;
+	return;
+#else
 	if (!allow_inherit)
 		return;
 
+#ifndef SCX_FCP_NO_FANOUT_CAP
 	/* Cap same-TGID fan-out per burst to 1 sequential stage handoff. */
 	if (!sync_wake && wctx->woke_peer > 1) {
 		stat_edges_budget_rejected++;
 		return;
 	}
+#endif
+#endif
 	expiry = wctx->token_expire_ns;
 	if (wctx->frame_start_ns > 0) {
 		u64 frame_expiry = wctx->frame_start_ns + frame_budget_ns;
@@ -1308,7 +1315,11 @@ void BPF_STRUCT_OPS(fcp_exit, struct scx_exit_info *ei)
 	UEI_RECORD(uei, ei);
 }
 
-#ifdef SCX_FCP_ZERO_HINT
+#ifdef SCX_FCP_NO_TOKEN
+#define FCP_OPS_NAME "fcp_nt"
+#elif defined(SCX_FCP_NO_FANOUT_CAP)
+#define FCP_OPS_NAME "fcp_nf"
+#elif defined(SCX_FCP_ZERO_HINT)
 #define FCP_OPS_NAME "fcp_zh"
 #elif defined(SCX_FCP_NAMED)
 #define FCP_OPS_NAME "fcp_nh"
