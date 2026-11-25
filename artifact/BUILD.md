@@ -35,19 +35,21 @@ Set `SCX_ROOT` in [`artifact/config.env`](config.env), then run from the reposit
 ./artifact/pipeline.sh build
 ```
 
-This compiles all three static profiles from `src/bpf/main.bpf.c`, the baseline schedulers, `fcp_frame_bench`, and `schbench`:
+This compiles all five static `scx_fcp` profiles from `src/bpf/main.bpf.c`, the baseline schedulers, `fcp_frame_bench`, and `schbench` into `artifact/build/bin/$PLATFORM/`:
 
 ```text
-artifact/build/bin/scx_fcp             (default profile: behavioral + comm/PID roots, ops: fcp)
-artifact/build/bin/scx_fcp_named       (named profile: comm/PID + behavioral roots, ops: fcp_nh)
-artifact/build/bin/scx_fcp_behavioral  (zero-hint profile: behavioral roots only, ops: fcp_zh)
-artifact/build/bin/scx_lavd
-artifact/build/bin/scx_p2dq
-artifact/build/bin/fcp_frame_bench
+artifact/build/bin/x86_64/scx_fcp             (default profile: behavioral + comm/PID roots, ops: fcp)
+artifact/build/bin/x86_64/scx_fcp_named       (named profile: comm/PID + behavioral roots, ops: fcp_nh)
+artifact/build/bin/x86_64/scx_fcp_behavioral  (zero-hint profile: behavioral roots only, ops: fcp_zh)
+artifact/build/bin/x86_64/scx_fcp_notoken     (ablation profile: root admission w/o token inheritance, ops: fcp_nt)
+artifact/build/bin/x86_64/scx_fcp_nofanout    (ablation profile: token inheritance w/o burst fan-out cap, ops: fcp_nf)
+artifact/build/bin/x86_64/scx_lavd
+artifact/build/bin/x86_64/scx_p2dq
+artifact/build/bin/x86_64/fcp_frame_bench
+artifact/build/bin/x86_64/schbench
 ```
 
-and writes `artifact/build/bin/SHA256SUMS`.
-
+and writes `artifact/build/bin/$PLATFORM/SHA256SUMS`.
 To invoke `build_static.sh` directly:
 
 ```bash
@@ -65,7 +67,7 @@ source artifact/sa8155.env
 
 `ARM64_LIBS` defaults to `$HOME/opt/arm64-libs`. Install host packages `gcc-aarch64-linux-gnu` and `libc6-dev-arm64-cross` for the cross linker and sysroot. The build requires `libelf.a`, `libz.a`, and `libzstd.a` under `$ARM64_LIBS/lib`; it adds that directory to the Rust linker search path and links `libzstd.a`. Do not install host `libelf-dev:arm64` just for this build.
 
-The default ARM64 build stages `scx_fcp`, `scx_fcp_behavioral`, `scx_lavd`, and `scx_p2dq` in `artifact/build/bin/arm64/`. Device uses `scx_fcp_behavioral` for `scx_fcp_v_a_depth3_tgid1ms` and runs `scx_p2dq` with PELT disabled for `scx_p2dq_pelt_off`. It builds the baseline packages `scx_lavd_k61` and `scx_p2dq_k61`; set `BUILD_BASELINES=0` to skip them.
+The default ARM64 build stages `scx_fcp`, `scx_fcp_behavioral`, `scx_fcp_notoken`, `scx_fcp_nofanout`, `scx_lavd` (from `scx_lavd_k61`), `scx_p2dq` (from `scx_p2dq_k61`), `fcp_frame_bench`, and `schbench` in `artifact/build/bin/arm64/`. Set `BUILD_BASELINES=0` to skip rebuilding baselines.
 
 ## 3. JankBench APK (`com.android.benchmark`)
 
