@@ -164,6 +164,7 @@ fn main() -> Result<()> {
             rodata.cpu_capacity[cpu] = caps[cpu];
             rodata.is_big_core[cpu] = is_big[cpu];
         }
+        rodata.has_little_cores = if is_big.iter().take(nr_cpus).any(|&b| b == 0) { 1 } else { 0 };
     }
 
     let mut skel = scx_ops_load!(open_skel, fcp_ops, uei)?;

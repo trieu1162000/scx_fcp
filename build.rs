@@ -7,6 +7,7 @@ fn main() {
     let profile = std::env::var("SCX_FCP_BUILD").unwrap_or_default();
     println!("cargo:rerun-if-env-changed=SCX_FCP_BUILD");
     println!("cargo:rerun-if-env-changed=SCX_FCP_NO_TOKEN");
+    println!("cargo:rerun-if-env-changed=SCX_FCP_NO_FANOUT_CAP");
     match profile.as_str() {
         "zero-hint" => bpf_cflags.push_str(" -DSCX_FCP_ZERO_HINT"),
         "named" => bpf_cflags.push_str(" -DSCX_FCP_NAMED"),

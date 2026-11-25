@@ -22,6 +22,7 @@ const volatile bool preempt_on_crit_wakeup = true;
 
 const volatile u64 cpu_capacity[MAX_CPUS];
 const volatile u8 is_big_core[MAX_CPUS];
+const volatile u8 has_little_cores = 1;
 
 volatile u64 vtime_now;
 
@@ -562,7 +563,7 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 	if (!waker || waker->pid == p->pid || (waker->flags & PF_KTHREAD))
 		return;
 
-#ifndef SCX_FCP_ZERO_HINT
+#if !defined(SCX_FCP_ZERO_HINT) && !defined(SCX_FCP_NO_FANOUT_CAP)
 	if (is_render_pool_comm(p->comm) || is_angle_worker_comm(p->comm) ||
 	    is_bg_worker_comm(p->comm))
 		return;
@@ -606,14 +607,21 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 		return;
 	}
 
+#ifdef SCX_FCP_NO_TOKEN
+	(void)allow_inherit;
+	return;
+#else
 	if (!allow_inherit)
 		return;
 
+#ifndef SCX_FCP_NO_FANOUT_CAP
 	/* Cap same-TGID fan-out per burst to 1 sequential stage handoff. */
 	if (!sync_wake && wctx->woke_peer > 1) {
 		stat_edges_budget_rejected++;
 		return;
 	}
+#endif
+#endif
 	expiry = wctx->token_expire_ns;
 	if (wctx->frame_start_ns > 0) {
 		u64 frame_expiry = wctx->frame_start_ns + frame_budget_ns;
@@ -773,6 +781,12 @@ static __always_inline s32 get_cluster_home_cpu(struct task_struct *p,
 	u32 mask = 15;
 	s32 cpu;
 
+	if (!has_little_cores && nr_cpu_ids > 0) {
+		cpu = (s32)((u32)p->pid % nr_cpu_ids);
+		if (cpu >= 0 && cpu < MAX_CPUS && bpf_cpumask_test_cpu(cpu, p->cpus_ptr))
+			return cpu;
+		return scx_bpf_task_cpu(p);
+	}
 	if (half <= 2) {
 		half = 2;
 		mask = 1;
@@ -819,7 +833,7 @@ static __always_inline s32 pick_target_cpu(struct task_struct *p,
 	    bpf_cpumask_test_cpu(prev_cpu, idle_cpumask)) {
 		bool prev_is_big = cpu_is_big(prev_cpu);
 
-		if ((want_big && prev_is_big) || (!want_big && !prev_is_big)) {
+		if ((want_big && prev_is_big) || (!want_big && (!prev_is_big || !has_little_cores))) {
 			if (scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
 				scx_bpf_put_cpumask(idle_cpumask);
 				*direct_idle = true;
@@ -1301,7 +1315,11 @@ void BPF_STRUCT_OPS(fcp_exit, struct scx_exit_info *ei)
 	UEI_RECORD(uei, ei);
 }
 
-#ifdef SCX_FCP_ZERO_HINT
+#ifdef SCX_FCP_NO_TOKEN
+#define FCP_OPS_NAME "fcp_nt"
+#elif defined(SCX_FCP_NO_FANOUT_CAP)
+#define FCP_OPS_NAME "fcp_nf"
+#elif defined(SCX_FCP_ZERO_HINT)
 #define FCP_OPS_NAME "fcp_zh"
 #elif defined(SCX_FCP_NAMED)
 #define FCP_OPS_NAME "fcp_nh"

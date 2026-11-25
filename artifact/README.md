@@ -1,84 +1,51 @@
-# scx_fcp artifact
+# `scx_fcp` Artifact Reproduction Guide
 
-Reproducibility package for the scx_fcp paper. This directory is the
-**canonical entrypoint** for building and running the evaluation; the design
-dossier remains under `scx_fcp/docs/`.
-
-The package covers the scheduler, workload APKs, Cuttlefish launch, the
-validated matrix, and the aggregation path to paper tables.
+Clean, deterministic reproduction pipeline for `scx_fcp`: multi-core scaling (`fcp_frame_bench` + `schbench`), AOSP `JankBench` (8 workloads), AOSP `UiBenchJankTests` (6 workloads), component ablation, and isolated `struct_ops` eBPF runtime overhead.
 
 ## Quick start
+
+1. Review [`artifact/config.env`](config.env) (`SCX_ROOT`, `CF_HOME`, `ANDROID_ADB_SERVER_PORT=5038` for Cuttlefish or `5037` for physical ARM64 device).
+2. Run from the repository root:
 
 ```bash
 ./artifact/pipeline.sh build
 ./artifact/pipeline.sh launch
 ./artifact/pipeline.sh smoke
-./artifact/pipeline.sh full
-./artifact/pipeline.sh analyze --out results/full14
+
+# 1. Multi-core scaling (4 / 8 / 16 / 32 vCPUs, sym + dl, 6 policies, 10 runs)
+./artifact/pipeline.sh micro --suite all --runs 10 --out artifact/results/cf_micro_10x
+./artifact/pipeline.sh analyze artifact/results/cf_micro_10x
+
+# 2. Full 14-test AOSP macro suite (8 JankBench + 6 UiBench) on 32-vCPU Asymmetric (dl) & Symmetric (sym)
+./artifact/pipeline.sh macro --topo dl  --runs 10 --out artifact/results/cf32_macro_dl
+./artifact/pipeline.sh macro --topo sym --runs 10 --out artifact/results/cf32_macro_sym
+./artifact/pipeline.sh analyze artifact/results/cf32_macro_dl artifact/results/cf32_macro_sym
+
+# 3. Component ablation (notoken, nofanout, behavioral, full) on 32-vCPU Asymmetric (dl)
+./artifact/pipeline.sh ablation --topo dl --runs 5 --out artifact/results/cf32_ablation_dl
+./artifact/pipeline.sh analyze artifact/results/cf32_ablation_dl
+
+# 4. Isolated eBPF struct_ops runtime overhead (bpf_stats_enabled=1)
+./artifact/pipeline.sh overhead --topo dl  --runs 3 --out artifact/results/cf32_overhead_dl
+./artifact/pipeline.sh overhead --topo sym --runs 3 --out artifact/results/cf32_overhead_sym
+./artifact/pipeline.sh analyze artifact/results/cf32_overhead_dl artifact/results/cf32_overhead_sym
 ```
 
-## Start here
+## Physical Qualcomm SA8155P (`arm64`, port `5037`, zero-reboot safe)
 
-| Need | Document |
-|---|---|
-| Host, Cuttlefish image, kernel, initramfs | [`SETUP.md`](SETUP.md) |
-| Build the scheduler, synthetic bench, and workload APKs | [`BUILD.md`](BUILD.md) |
-| Quick start, Cuttlefish launch, run the matrix | [`RUN.md`](RUN.md) |
-| Fail-fast validity, retries, aggregation | [`VALIDATE.md`](VALIDATE.md) |
-| Paper-to-artifact map and known limitations | this file |
-| Design/ADR/code map | See the source tree's `docs/` dossier (not included in this docs branch) |
+When the physical SA8155P board is connected on ADB server port `5037`, the harness runs without rebooting the device (preserving USB ADB connectivity):
 
-## Evaluated configuration
-
-The full matrix evaluates four policies on a 16-vCPU Android 17 Cuttlefish
-guest:
-
-```text
-eevdf
-scx_fcp                 (zero-hint build)
-scx_p2dq --enable-pelt false
-scx_lavd
+```bash
+PLATFORM=arm64 ANDROID_ADB_SERVER_PORT=5037 SERIAL=1feeaa2f ./artifact/pipeline.sh build
+PLATFORM=arm64 ANDROID_ADB_SERVER_PORT=5037 SERIAL=1feeaa2f ./artifact/pipeline.sh launch
+PLATFORM=arm64 ANDROID_ADB_SERVER_PORT=5037 SERIAL=1feeaa2f ./artifact/pipeline.sh macro --runs 10 --out artifact/results/sa8155p_macro_10x
+PLATFORM=arm64 ANDROID_ADB_SERVER_PORT=5037 SERIAL=1feeaa2f ./artifact/pipeline.sh overhead --runs 3 --out artifact/results/sa8155p_overhead
+PLATFORM=arm64 ./artifact/pipeline.sh analyze artifact/results/sa8155p_macro_10x artifact/results/sa8155p_overhead
 ```
 
-The evaluated scheduler source is in `old_5a2e_src/`; the pipeline builds it
-into `artifact/build/bin/scx_fcp_behavioral`.
+## Integrity & Reproducibility Guarantees
 
-## Evaluation scope
-
-```text
-JankBench: 8 benchmark IDs (0..7)
-UiBench:   6 test methods
-Policies:  4
-Runs:      10 valid runs/reps per (test, policy)
-Cells:     14 tests x 4 policies = 56 required cells
-```
-
-Validity is checked **per run/rep**. Invalid JankBench runs and invalid UiBench
-blocks are moved aside and rerun; they are never pooled into a result. See
-`RUN.md` for the exact criteria.
-
-## What is packaged here
-
-```text
-SETUP.md              host, Cuttlefish image, kernel, initramfs
-BUILD.md              scheduler build, APK build
-RUN.md                quick start, Cuttlefish launch, full matrix, analysis
-scripts/launch_cuttlefish.sh  parameterized 4/8/16/32-vCPU launcher
-configs/              kernel/device/Cuttlefish/policy configs (added at freeze)
-old_5a2e_src/         frozen scheduler source snapshot
-expected/             planned expected-output schema and sample tables
-```
-
-The public pipeline is:
-
-```text
-artifact/pipeline.sh     build | launch | smoke | full | resume | analyze
-```
-
-Per-benchmark adapters stay under `artifact/scripts/internal/` and are hidden
-behind the pipeline interface.
-
-## Not included
-
-- The Cuttlefish system image (obtain the matching AOSP 17 image separately).
-- The physical SA8155P board and its measurements.
+- **Persistent Host Topology Verification**: On Cuttlefish (`PLATFORM=x86_64`), `scripts/harness.py` verifies every `crosvm_vcpu` thread's Linux scheduler policy (`SCHED_DEADLINE` `892us/2000us` on LITTLE half `0..C/2-1` and `SCHED_OTHER nice -10` on big half `C/2..C-1` for `dl`; `SCHED_OTHER nice 0` on all vCPUs for `sym`) **before and after every run**.
+- **One-Way `sched_proxy_exec` Ordering**: Kernel `sched_proxy_exec/enable` is a one-way static branch (`0 -> 1`). All non-proxy policies run round-robin interleaved first while `sched_proxy_exec == 0`, followed by `eevdf_proxy_exec` (`1`), with automatic guest reboot + host `SCHED_DEADLINE` restoration whenever resetting `1 -> 0`.
+- **Zero Timing Perturbation**: All latency campaigns enforce `kernel.bpf_stats_enabled=0`; eBPF callback cost is measured exclusively in isolated `overhead` campaigns.
+- **Forensic Audit**: `scripts/analyze.py` reads raw SQLite `ui_results` rows and `GfxMonitor` instrumentation outputs directly, verifying strict percentile monotonicity (`p50 <= p95 <= p99`) and exact frame counts.

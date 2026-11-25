@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
-# Single entrypoint for the scx_fcp artifact.
+# Unified CLI entrypoint for building, launching, running, and analyzing scx_fcp benchmarks.
 set -euo pipefail
 
 ARTIFACT=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$ARTIFACT/.." && pwd)
 SCRIPTS="$ARTIFACT/scripts"
-INTERNAL="$SCRIPTS/internal"
+
+if [ -f "$ARTIFACT/config.env" ]; then
+  set -a
+  . "$ARTIFACT/config.env"
+  set +a
+fi
 
 usage() {
   cat <<'EOF'
 Usage: ./artifact/pipeline.sh <command> [options]
 
 Commands:
-  build                 build scheduler, baselines, synthetic bench
-  launch                launch Cuttlefish (CPUS=4/8/16/32)
-  smoke                 one JankBench id, no UiBench
-  full                  full 14-test matrix (default RUNS=10)
-  resume --out DIR      resume an existing campaign
-  analyze --out DIR     integrate/validate a campaign
-  help                  this message
-
-Environment:
-  SCX_ROOT, BIN_DIR     scheduler/build paths
-  CF_HOME, KERNEL, INITRAMFS, SERIAL
-  CPUS, MEMORY_MB
-  OUT                   campaign output directory
+  build                      Build static scx_fcp profiles, baselines, fcp_frame_bench, schbench
+  launch                     Launch Cuttlefish (PLATFORM=x86_64) or stage physical device (PLATFORM=arm64)
+  smoke [--out DIR]          Fast end-to-end validation across policies (micro + JankBench ID 0)
+  micro [options]            Multi-core scaling microbenchmark suite (fcp_frame_bench + schbench)
+                             Options: --cpus "4 8 16 32" --topos "sym dl" --runs 10 --suite fcp|schbench|all --quick --resume --out DIR
+  macro [options]            Full 14-test AOSP macro suite (8 JankBench + 6 UiBenchJankTests)
+  full  [options]            Alias for macro
+                             Options: --topo dl|sym --runs 10 --bg-workers N --suite all|jankbench|uibench --quick --resume --out DIR
+  overhead [options]         Isolated bpf_stats_enabled=1 eBPF struct_ops runtime overhead suite
+                             Options: --topo dl|sym --runs 5 --suite all|jankbench|uibench --quick --resume --out DIR
+  ablation [options]         Component ablation suite on JankBench (notoken, nofanout, behavioral, full)
+                             Options: --topo dl --runs 10 --quick --resume --out DIR
+  analyze DIR [--export DIR] Validate raw campaign(s), verify statistical invariants, and emit JSON/LaTeX summaries
+  help                       Show this message
 EOF
 }
 
@@ -33,24 +40,27 @@ shift || true
 case "$cmd" in
   build)
     export BUILD_BASELINES=${BUILD_BASELINES:-1}
-    export BIN_DIR=${BIN_DIR:-$ARTIFACT/build/bin}
-    exec "$INTERNAL/build_static.sh" "$@"
+    export BIN_DIR=${BIN_DIR:-$ARTIFACT/build/bin/$PLATFORM}
+    exec "$ROOT/scripts/build_static.sh" "$@"
     ;;
   launch)
-    exec "$SCRIPTS/launch_cuttlefish.sh" "$@"
+    case "$PLATFORM" in
+      x86_64) exec "$SCRIPTS/launch_cuttlefish.sh" "$@" ;;
+      arm64)  exec "$SCRIPTS/launch_device.sh" "$@" ;;
+      *) echo "unsupported PLATFORM: $PLATFORM" >&2; exit 2 ;;
+    esac
     ;;
-  smoke)
-    OUT=${OUT:-"$ARTIFACT/results/smoke"}
-    exec "$INTERNAL/run_full_matrix_14.sh" --out "$OUT" --runs 1 --jank-tests 0 --skip-uibench "$@"
+  smoke|micro|macro|overhead|ablation)
+    exec python3 "$SCRIPTS/harness.py" "$cmd" "$@"
     ;;
   full)
-    exec "$INTERNAL/run_full_matrix_14.sh" "$@"
+    exec python3 "$SCRIPTS/harness.py" macro "$@"
     ;;
   resume)
-    exec "$INTERNAL/run_full_matrix_14.sh" --resume "$@"
+    exec python3 "$SCRIPTS/harness.py" macro --resume "$@"
     ;;
-  analyze)
-    exec python3 "$INTERNAL/integrate_full14.py" "$@"
+  analyze|overhead-analyze)
+    exec python3 "$SCRIPTS/analyze.py" "$@"
     ;;
   help|-h|--help)
     usage

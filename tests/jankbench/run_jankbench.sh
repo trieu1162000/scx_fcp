@@ -14,12 +14,13 @@
 #   BM_ID        enabled benchmark IDs       (default: 0,1,2,3,4,5,6,7)
 #   RUN_COUNT    iterations per benchmark    (default: 10)
 #
-# Policies: eevdf, scx_fcp, scx_fcp_named, scx_fcp_behavioral,
-#           scx_lavd, scx_p2dq. A policy may also name a binary in BIN_DIR
-#           whose sched_ext ops name is given by OPS.
+# Built-in policies: eevdf, scx_fcp, scx_fcp_named, scx_fcp_behavioral,
+#   scx_fcp_v_a_depth3_tgid1ms, scx_lavd, scx_p2dq, scx_p2dq_pelt_off.
+# Aliases reuse binaries; arbitrary BIN_DIR binaries can set OPS explicitly.
 set -uo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$REPO_ROOT/artifact/config.env" ] && . "$REPO_ROOT/artifact/config.env"
 ADB=${ADB:-adb}
 SERIAL=${SERIAL:-127.0.0.1:6520}
 SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
@@ -46,14 +47,18 @@ done
 [ -n "$POLICY" ] || { echo "missing -p policy" >&2; exit 2; }
 [ -n "$RUN" ] || RUN=1
 
+BIN=""
+ARGS=""
+OPS=""
 case "$POLICY" in
-    eevdf)              BIN="" ; ARGS="" ; OPS="" ;;
-    scx_fcp)            BIN=scx_fcp ; ARGS="" ; OPS=fcp ;;
-    scx_fcp_named)      BIN=scx_fcp_named ; ARGS="" ; OPS=fcp_nh ;;
-    scx_fcp_behavioral) BIN=scx_fcp_behavioral ; ARGS="" ; OPS=fcp_zh ;;
-    scx_fcp_zero_hint)  BIN=scx_fcp_behavioral ; ARGS="" ; OPS=fcp_zh ;;
-    scx_lavd)           BIN=scx_lavd ; ARGS="" ; OPS=lavd ;;
-    scx_p2dq)           BIN=scx_p2dq ; ARGS="--enable-pelt false" ; OPS=p2dq ;;
+    eevdf) ;;
+    scx_fcp) BIN=scx_fcp; OPS=fcp ;;
+    scx_fcp_named) BIN=scx_fcp_named; OPS=fcp_nh ;;
+    scx_fcp_behavioral|scx_fcp_v_a_depth3_tgid1ms)
+        BIN=scx_fcp_behavioral; OPS=fcp_zh ;;
+    scx_lavd) BIN=scx_lavd; OPS=lavd ;;
+    scx_p2dq|scx_p2dq_pelt_off)
+        BIN=scx_p2dq; ARGS="--enable-pelt false"; OPS=p2dq ;;
     *)
         BIN=$POLICY
         ARGS=${OPS_ARGS:-}
@@ -64,7 +69,6 @@ esac
 A=("$ADB" -s "$SERIAL")
 OUT=$RESULTS_ROOT/$POLICY/run-$RUN
 LOG=$OUT/harness.log
-DB_DEVICE=/data/data/com.android.benchmark/databases/BenchmarkResults
 DB_TMP=/data/local/tmp/jb_pull/BenchmarkResults.db
 BM_PKG=com.android.benchmark
 BM_ACT=$BM_PKG/.app.RunLocalBenchmarksActivity
@@ -88,12 +92,12 @@ wait_device() {
 }
 
 kill_stale() {
-    local name pid
+    local name pid pids
     for name in scx_fcp scx_fcp_named scx_fcp_behavioral scx_lavd scx_p2dq; do
         pid=$(sh_ "pidof $name" | tr -d '\r')
         [ -n "$pid" ] && sh_ "kill -15 $pid" >/dev/null 2>&1 || true
     done
-    pids=$(sh_ "ps -A -o PID,ARGS | awk '/data\\/local\\/tmp\\/scx\\/scx_/ {print \\$1}'" | tr -d '\r')
+    pids=$(sh_ "ps -A -o PID,ARGS | awk '/data\\/local\\/tmp\\/scx\\/scx_/ {print \$1}'" | tr -d '\r')
     for pid in $pids; do
         sh_ "kill -15 $pid" >/dev/null 2>&1 || true
     done
@@ -183,6 +187,7 @@ start_scheduler() {
 
 stop_scheduler() {
     [ -n "$BIN" ] || return 0
+    sh_ "cat $REMOTE/${POLICY}_run${RUN}.log" > "$OUT/scheduler.log" 2>/dev/null || true
     kill_stale || true
     [ "$(state)" = disabled ] && return 0
     log "warning: sched_ext state after stop is $(state)"
@@ -241,7 +246,6 @@ mkdir -p "$OUT"
 : > "$LOG"
 log "start policy=$POLICY run=$RUN reboot=$REBOOT"
 wait_device || die "device $SERIAL not reachable"
-HAVE_SQLITE=$(sh_ 'command -v sqlite3 >/dev/null 2>&1 && echo yes || echo no')
 
 if [ -n "$APK" ]; then
     [ -f "$APK" ] || die "missing APK $APK"
@@ -249,7 +253,21 @@ if [ -n "$APK" ]; then
 fi
 
 prepare_device
+ANDROID_USER=$(sh_ 'am get-current-user' | tr -d '\r')
+case "$ANDROID_USER" in
+    ''|*[!0-9]*) die "could not determine current Android user: ${ANDROID_USER:-empty}" ;;
+esac
+DB_DEVICE="/data/user/$ANDROID_USER/$BM_PKG/databases/BenchmarkResults"
+log "database path=$DB_DEVICE"
+HAVE_SQLITE=$(sh_ 'command -v sqlite3 >/dev/null 2>&1 && echo yes || echo no')
 kill_stale || die "could not return sched_ext to disabled"
+sh_ "am force-stop --user $ANDROID_USER $BM_PKG" >/dev/null 2>&1 || true
+CLEAR_RESULT=$(sh_ "pm clear --user $ANDROID_USER $BM_PKG" | tr -d '\r')
+[ "$CLEAR_RESULT" = Success ] || die "failed to clear $BM_PKG data for Android user $ANDROID_USER: ${CLEAR_RESULT:-no output}"
+log "cleared $BM_PKG data for Android user $ANDROID_USER"
+sh_ 'logcat -c' >/dev/null 2>&1 || true
+sh_ 'input keyevent KEYCODE_WAKEUP' >/dev/null 2>&1 || true
+sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
 push_binary
 start_scheduler
 
@@ -257,14 +275,8 @@ STATE_BEFORE=$(state)
 OPS_BEFORE=$(ops)
 printf '%s\n%s\n' "$STATE_BEFORE" "$OPS_BEFORE" > "$OUT/state_before.txt"
 
-sh_ "am force-stop $BM_PKG" >/dev/null 2>&1 || true
-sh_ "pm clear $BM_PKG" >>"$LOG" 2>&1 || true
-sh_ 'logcat -c' >/dev/null 2>&1 || true
-sh_ 'input keyevent KEYCODE_WAKEUP' >/dev/null 2>&1 || true
-sh_ 'wm dismiss-keyguard' >/dev/null 2>&1 || true
-
 BM_ID=${BM_ID:-0,1,2,3,4,5,6,7}
-BM_CMD="am start -W -n $BM_ACT --eia com.android.benchmark.EXTRA_ENABLED_BENCHMARK_IDS $BM_ID --ei com.android.benchmark.EXTRA_RUN_COUNT $RUN_COUNT --ez com.android.benchmark.FINISH_WHEN_DONE true"
+BM_CMD="am start -W --user $ANDROID_USER -n $BM_ACT --eia com.android.benchmark.EXTRA_ENABLED_BENCHMARK_IDS $BM_ID --ei com.android.benchmark.EXTRA_RUN_COUNT $RUN_COUNT --ez com.android.benchmark.FINISH_WHEN_DONE true"
 START=$(date -Iseconds)
 log "benchmark: $BM_CMD"
 "${A[@]}" shell "$BM_CMD" > "$OUT/am_start.txt" 2>&1
@@ -275,6 +287,10 @@ if ! wait_results; then
     die "no complete JankBench result database"
 fi
 END=$(date -Iseconds)
+STATE_DURING=$(state)
+OPS_DURING=$(ops)
+printf '%s\n%s\n' "$STATE_DURING" "$OPS_DURING" > "$OUT/state_during.txt"
+log "scheduler at result state=$STATE_DURING ops=${OPS_DURING:-none}"
 
 sh_ 'logcat -d -v threadtime' > "$OUT/logcat.txt" 2>&1 || true
 pull_db
@@ -293,7 +309,7 @@ if [ -n "$BIN" ]; then
 fi
 
 export POLICY RUN SERIAL START END BM_CMD SCHED_SHA BIN ARGS REBOOT RUN_COUNT
-python3 - "$OUT/manifest.json" <<'PY'
+python3 - "$OUT/manifest.json" <<'PY' || die "failed to write run manifest"
 import json
 import os
 import sys
@@ -305,6 +321,8 @@ def read(name):
     with open(os.path.join(out, name), encoding="utf-8") as f:
         return f.read().strip()
 
+state_before = read("state_before.txt").splitlines()
+state_during = read("state_during.txt").splitlines()
 manifest = {
     "date": env["START"][:10],
     "policy": env["POLICY"],
@@ -319,8 +337,10 @@ manifest = {
     "scheduler_binary": env.get("BIN") or "none",
     "scheduler_args": env.get("ARGS") or "",
     "scheduler_sha256": env.get("SCHED_SHA") or "none",
-    "scx_state_before": read("state_before.txt").splitlines()[0],
-    "scx_ops_before": read("state_before.txt").splitlines()[1],
+    "scx_state_before": state_before[0] if state_before else "unknown",
+    "scx_ops_before": state_before[1] if len(state_before) > 1 else "",
+    "scx_state_during": state_during[0] if state_during else "unknown",
+    "scx_ops_during": state_during[1] if len(state_during) > 1 else "",
     "workload": "AOSP JankBench 2.2 Full Suite (benchmark ids 0..7)",
     "benchmark_command": env["BM_CMD"],
     "run_count": int(env["RUN_COUNT"]),

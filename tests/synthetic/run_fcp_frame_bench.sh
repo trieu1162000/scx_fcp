@@ -17,6 +17,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+[ -f "$REPO_ROOT/artifact/config.env" ] && . "$REPO_ROOT/artifact/config.env"
 ADB=${ADB:-adb}
 SERIAL=${SERIAL:-127.0.0.1:6520}
 SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}

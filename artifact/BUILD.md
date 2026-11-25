@@ -1,73 +1,77 @@
 # Build pipeline
 
-This document builds everything required to reproduce the `scx_fcp` on Cuttlefish:
+This document builds everything required to reproduce `scx_fcp` on Cuttlefish:
 
 1. the unified `scx_fcp` scheduler (`scx_fcp`, `scx_fcp_named`, `scx_fcp_behavioral`) and `sched_ext` baselines (`scx_lavd`, `scx_p2dq`);
 2. the synthetic 4-stage frame pipeline benchmark (`fcp_frame_bench`);
-3. AOSP `JankBench` and AOSP `UiBench` / `UiBenchJankTests` workload APKs.
-
-The build is currently split between the repository build script and the AOSP
-workload trees. The commands below use environment variables rather than fixed
-host paths.
+3. AOSP `JankBench` and AOSP `UiBench` / `UiBenchJankTests` workload APKs (via either an AOSP tree or standalone Android SDK + JDK + Gradle).
 
 ## 1. Host prerequisites
 
-Tested on Ubuntu 24.04.1 LTS x86_64 with:
-
-```text
-Rust / Cargo 1.82+
-Clang / LLVM 19–22+
-bpftool, pahole, libelf-dev, libzstd-dev, zlib1g-dev
-make, cc, python3, unzip, rsync
-adb (Android platform-tools)
-Android SDK + JDK for APK builds (optional for building apks without cloning AOSP source tree)
-KVM access for Cuttlefish
-```
-
-For APK builds, set:
+Tested on Ubuntu 24.04.1 LTS x86_64. Install required host packages:
 
 ```bash
-export ANDROID_HOME=${ANDROID_HOME:-/path/to/Android/Sdk}
-export JAVA_HOME=${JAVA_HOME:-/path/to/jdk}
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential pkg-config libelf-dev libzstd-dev zlib1g-dev \
+  clang llvm lld pahole python3 unzip rsync adb \
+  gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 ```
+
+Additional toolchains:
+- Rust / Cargo `1.82+`
+- Clang / LLVM `19–22+` (required for BPF arena / `may_goto` in `scx_lavd` and `scx_p2dq`)
+- Android SDK + JDK (optional: for building the workload APKs with Gradle without cloning a full AOSP tree):
+
+Set `ANDROID_HOME`, `JAVA_HOME`, and `AOSP_TESTS` in [`artifact/config.env`](config.env) (or in your shell environment).
 
 ## 2. Scheduler and synthetic benchmark
 
-The canonical scheduler source lives at `$SCX_ROOT/scheds/rust/scx_fcp` (mirrored  and core developed in `src/`).
+The canonical scheduler source lives at `$SCX_ROOT/scheds/rust/scx_fcp` (mirrored and developed in `src/`).
+
+Set `SCX_ROOT` in [`artifact/config.env`](config.env), then run from the repository root:
 
 ```bash
-cd /path/to/scx_fcp
-export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
 ./artifact/pipeline.sh build
 ```
 
-This compiles all three static profiles from the unified single-entry source (`src/bpf/main.bpf.c`), optional baselines, and `fcp_frame_bench`:
+This compiles all five static `scx_fcp` profiles from `src/bpf/main.bpf.c`, the baseline schedulers, `fcp_frame_bench`, and `schbench` into `artifact/build/bin/$PLATFORM/`:
 
 ```text
-artifact/build/bin/scx_fcp             (default profile: behavioral + comm/PID roots, ops: fcp)
-artifact/build/bin/scx_fcp_named       (named profile: comm/PID + behavioral roots, ops: fcp_nh)
-artifact/build/bin/scx_fcp_behavioral  (zero-hint profile: behavioral roots only, ops: fcp_zh)
-artifact/build/bin/scx_lavd
-artifact/build/bin/scx_p2dq
-artifact/build/bin/fcp_frame_bench
+artifact/build/bin/x86_64/scx_fcp             (default profile: behavioral + comm/PID roots, ops: fcp)
+artifact/build/bin/x86_64/scx_fcp_named       (named profile: comm/PID + behavioral roots, ops: fcp_nh)
+artifact/build/bin/x86_64/scx_fcp_behavioral  (zero-hint profile: behavioral roots only, ops: fcp_zh)
+artifact/build/bin/x86_64/scx_fcp_notoken     (ablation profile: root admission w/o token inheritance, ops: fcp_nt)
+artifact/build/bin/x86_64/scx_fcp_nofanout    (ablation profile: token inheritance w/o burst fan-out cap, ops: fcp_nf)
+artifact/build/bin/x86_64/scx_lavd
+artifact/build/bin/x86_64/scx_p2dq
+artifact/build/bin/x86_64/fcp_frame_bench
+artifact/build/bin/x86_64/schbench
 ```
 
-and writes `artifact/build/bin/SHA256SUMS`.
-
-To build directly via `build_static.sh`:
+and writes `artifact/build/bin/$PLATFORM/SHA256SUMS`.
+To invoke `build_static.sh` directly:
 
 ```bash
-export SCX_ROOT=${SCX_ROOT:-$HOME/workspace/scx}
-export ARTIFACT=${ARTIFACT:-$PWD/artifact}
-SCX_ROOT="$SCX_ROOT" BIN_DIR="$ARTIFACT/build/bin" \
-  "$ARTIFACT/scripts/internal/build_static.sh"
+./scripts/build_static.sh
 ```
 
-## 3. JankBench APK
+### SA8155P / SCX 6.1 ARM64
 
-`JankBench` (`com.android.benchmark`) is an intent-driven app, not an instrumentation test module. It must
-hold `INJECT_EVENTS`, so the final APK must be platform-signed with the image's
-platform test key. it runs all 8 UI benchmarks (`BM_ID=0,1,2,3,4,5,6,7`):
+Build from the existing SCX 6.1 workspace and historical cross-compiled static archives:
+
+```bash
+source artifact/sa8155.env
+./artifact/pipeline.sh build
+```
+
+`ARM64_LIBS` defaults to `$HOME/opt/arm64-libs`. Install host packages `gcc-aarch64-linux-gnu` and `libc6-dev-arm64-cross` for the cross linker and sysroot. The build requires `libelf.a`, `libz.a`, and `libzstd.a` under `$ARM64_LIBS/lib`; it adds that directory to the Rust linker search path and links `libzstd.a`. Do not install host `libelf-dev:arm64` just for this build.
+
+The default ARM64 build stages `scx_fcp`, `scx_fcp_behavioral`, `scx_fcp_notoken`, `scx_fcp_nofanout`, `scx_lavd` (from `scx_lavd_k61`), `scx_p2dq` (from `scx_p2dq_k61`), `fcp_frame_bench`, and `schbench` in `artifact/build/bin/arm64/`. Set `BUILD_BASELINES=0` to skip rebuilding baselines.
+
+## 3. JankBench APK (`com.android.benchmark`)
+
+`JankBench` (`frameworks/base/tests/JankBench`) is an intent-driven app that runs all 8 UI benchmarks (`BM_ID=0,1,2,3,4,5,6,7`):
 - `0`: List View Fling
 - `1`: Image List View Fling
 - `2`: Shadow Grid Fling
@@ -77,64 +81,88 @@ platform test key. it runs all 8 UI benchmarks (`BM_ID=0,1,2,3,4,5,6,7`):
 - `6`: Overdraw Test
 - `7`: Bitmap Upload Test
 
-Source location in AOSP: `frameworks/base/tests/JankBench` (or prebuilt under `$AOSP_OUT/testcases/JankBench/x86_64/JankBench.apk`). Place the APK at:
+### Source changes in `JankBench`
+
+1. **`Automator.java` — fallback touch/key dispatch when `INJECT_EVENTS` is unavailable**:
+   In `app/src/main/java/com/android/benchmark/ui/automation/Automator.java`, `mInstrumentation.sendPointerSync(event)` and `mInstrumentation.sendKeyDownUpSync(code)` throw `SecurityException` unless the APK is signed with the target image's platform key. Wrapping both calls in `try { ... } catch (SecurityException e)` and dispatching directly to `mWindow.getDecorView().post(() -> mWindow.superDispatchTouchEvent(event))` (plus guarding `if (mResults != null)` in `writeResults()`) allows `JankBench` to run even when built with a standard debug key via standalone Gradle:
+
+   ```java
+   // In Automator.java (AutomatorHandler.handleMessage):
+   try {
+       mInstrumentation.sendPointerSync(event);
+   } catch (SecurityException e) {
+       dispatchTouchSync(event);
+   }
+   ```
+
+2. **`TextScrollActivity.java` — respect `EXTRA_HIT_RATE` for `BM_ID=3` vs `BM_ID=4`**:
+   In `app/src/main/java/com/android/benchmark/ui/TextScrollActivity.java` line 111, pass `mHitPercentage` instead of hardcoded `80`:
+
+   ```java
+   return new ArrayAdapter<>(this, android.R.layout.simple_list_item_1,
+           Utils.buildParagraphListWithHitPercentage(PARAGRAPH_COUNT, mHitPercentage));
+   ```
+
+### Build Option A: AOSP build tree
 
 ```bash
-source build/env_setup.sh
+source build/envsetup.sh
 lunch <target>
 m JankBench -j64
+cp -f "$ANDROID_PRODUCT_OUT/testcases/JankBench/x86_64/JankBench.apk" \
+  artifact/workloads/JankBench-platform-signed.apk
 ```
 
-#### (Optional) Lab build tree
+### Build Option B: Standalone Android SDK + JDK + Gradle (no AOSP tree required)
 
 ```bash
-export AOSP_TESTS=${AOSP_TESTS:-$HOME/work/aosp-tests}
 cd "$AOSP_TESTS/JankBenchGradle"
 ./gradlew :app:assembleDebug
+cp -f app/build/outputs/apk/debug/app-debug.apk \
+  /path/to/scx_fcp/artifact/workloads/JankBench-platform-signed.apk
 ```
 
-Then sign the resulting APK with the platform key used by the Cuttlefish image
-(for example via `apksigner` or the AOSP signing tools), and place it at:
+## 4. UiBench and UiBenchJankTests APKs (`com.android.test.uibench`)
 
-```text
-artifact/workloads/JankBench-platform-signed.apk
-```
+Source location in AOSP: `frameworks/base/tests/UiBench`.
 
-## 4. UiBench app and test APKs
+### Source change and runtime requirement for `testBitmapUploadJank` (`BitmapUploadActivity`)
 
-Source location in AOSP: `frameworks/base/tests/UiBench` (or prebuilt under `$AOSP_OUT/testcases/UiBench/x86_64/UiBench.apk` and `$AOSP_OUT/testcases/UiBenchJankTests/x86_64/UiBenchJankTests.apk`).
+In `src/com/android/test/uibench/BitmapUploadActivity.java`, `onCreate()` starts `mColorValueAnimator` (`ObjectAnimator.ofInt(uploadView, "colorValue", 0, 255)`) before `UploadView.onAttachedToWindow()` allocates `mBitmap`:
 
-**Important note on `testBitmapUploadJank` (`BitmapUploadActivity`)**:
-- `BitmapUploadActivity` is driven by two `ObjectAnimator` instances (`mColorValueAnimator` and `mYAnimator`) started in `Activity.onCreate()`.
-- If `settings put global animator_duration_scale 0` is set on the device, Android's `ValueAnimator.start()` jumps synchronously to its end value inside `onCreate()` *before* `onAttachedToWindow()` allocates `mBitmap`, throwing a `NullPointerException`.
-- Setting `settings put global animator_duration_scale 1` (and `setprop debug.hwui.renderer opengl` under Cuttlefish `guest_swiftshader`) allows `testBitmapUploadJank` and all 5 other `UiBenchJankTests` benchmarks (`6/6` total) to pass cleanly without modifying `UiBench.apk`. Both `run_uibench.sh` and `run_jankbench.sh` configure `animator_duration_scale 1` automatically.
+1. **Runtime setting**: Keep `settings put global animator_duration_scale 1` (and `setprop debug.hwui.renderer opengl` on Cuttlefish `guest_swiftshader`). If `animator_duration_scale` is `0`, `ValueAnimator.start()` jumps to its end value synchronously inside `onCreate()` while `mBitmap` is `null`. Both `launch_cuttlefish.sh` and `run_uibench.sh` set `animator_duration_scale 1` automatically.
+2. **Source null-guard in `BitmapUploadActivity.java` (`UploadView.setColorValue`)**: Even with `animator_duration_scale 1`, if the first layout traversal (`onAttachedToWindow()`) is delayed by a VSYNC frame under heavy CPU contention, `Choreographer`'s animation callback invokes `setColorValue()` before `mBitmap` is allocated, causing a `NullPointerException` at `mBitmap.eraseColor(...)`. Guard `mBitmap` in `setColorValue()`:
+
+   ```java
+   public void setColorValue(int colorValue) {
+       if (colorValue == mColorValue || mBitmap == null) return;
+       mColorValue = colorValue;
+       mBitmap.eraseColor(Color.rgb(mColorValue, 255 - mColorValue, 255));
+       invalidate();
+   }
+   ```
+
+### Build Option A: AOSP build tree
 
 ```bash
-source build/env_setup.sh
+source build/envsetup.sh
 lunch <target>
 m UiBench UiBenchJankTests -j64
+cp -f "$ANDROID_PRODUCT_OUT/testcases/UiBench/x86_64/UiBench.apk" \
+  artifact/workloads/UiBench-app-debug.apk
+cp -f "$ANDROID_PRODUCT_OUT/testcases/UiBenchJankTests/x86_64/UiBenchJankTests.apk" \
+  artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
-#### (Optional) Lab build tree
+### Build Option B: Standalone Android SDK + JDK + Gradle (no AOSP tree required)
 
 ```bash
-export AOSP_TESTS=${AOSP_TESTS:-$HOME/work/aosp-tests}
 cd "$AOSP_TESTS/UiBenchSuiteGradle"
 ./gradlew :app:assembleDebug :janktests:assembleDebug
-```
-
-Outputs:
-
-```text
-app/build/outputs/apk/debug/app-debug.apk
-janktests/build/outputs/apk/debug/janktests-debug.apk
-```
-
-Place the APKs at:
-
-```text
-artifact/workloads/UiBench-app-debug.apk
-artifact/workloads/UiBenchJankTests-debug.apk
+cp -f app/build/outputs/apk/debug/app-debug.apk \
+  /path/to/scx_fcp/artifact/workloads/UiBench-app-debug.apk
+cp -f janktests/build/outputs/apk/debug/janktests-debug.apk \
+  /path/to/scx_fcp/artifact/workloads/UiBenchJankTests-debug.apk
 ```
 
 ## 5. Expected build artifacts
@@ -146,12 +174,10 @@ artifact/build/bin/scx_fcp
 artifact/build/bin/scx_fcp_named
 artifact/build/bin/scx_fcp_behavioral
 artifact/build/bin/fcp_frame_bench
+artifact/build/bin/schbench
 artifact/build/bin/scx_lavd
 artifact/build/bin/scx_p2dq
 artifact/workloads/JankBench-platform-signed.apk
 artifact/workloads/UiBench-app-debug.apk
 artifact/workloads/UiBenchJankTests-debug.apk
 ```
-
-The pipeline records the built scheduler, baseline binaries, and workload
-APKs in the campaign output directory.
