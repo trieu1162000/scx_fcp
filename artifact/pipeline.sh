@@ -29,6 +29,8 @@ Commands:
                              Options: --topo dl|sym --runs 5 --suite all|jankbench|uibench --quick --resume --out DIR
   ablation [options]         Component ablation suite on JankBench (notoken, nofanout, behavioral, full)
                              Options: --topo dl --runs 10 --quick --resume --out DIR
+  guardrails [options]       Minimal MobiSys supplementary pass (~15 min: FPS, CPU Util, DVFS/Thermal, Throughput/Geekbench, Load Sweep)
+                             Options: --runs 3 --duration 45 --out DIR
   analyze DIR [--export DIR] Validate raw campaign(s), verify statistical invariants, and emit JSON/LaTeX summaries
   help                       Show this message
 EOF
@@ -52,6 +54,9 @@ case "$cmd" in
     ;;
   smoke|micro|macro|overhead|ablation)
     exec python3 "$SCRIPTS/harness.py" "$cmd" "$@"
+    ;;
+  guardrails)
+    exec "$SCRIPTS/run_mobisys_guardrails.sh" "$@"
     ;;
   full)
     exec python3 "$SCRIPTS/harness.py" macro "$@"
