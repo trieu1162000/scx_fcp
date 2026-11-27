@@ -75,6 +75,13 @@ def parse_max_temp_c(text: str) -> float | None:
         if ln.isdigit():
             v = int(ln)
             vals.append(v / 1000.0 if v > 1000 else float(v))
+            continue
+        # Also parse ---THERMAL--- lines from snap_before/snap_after: "<zone> <type> <temp>"
+        m = re.match(r"^thermal_zone\d+\s+\S+\s+(\d+)$", ln)
+        if m:
+            v = int(m.group(1))
+            if v > 0:
+                vals.append(v / 1000.0 if v > 1000 else float(v))
     return max(vals) if vals else None
 
 
@@ -88,28 +95,57 @@ def parse_gfxinfo_fps(text: str) -> dict[str, float]:
     if m_jk:
         jank_frames = int(m_jk.group(1))
 
-    # Extract PROFILEDATA frame durations (FrameCompleted - IntendedVsync)
+    # Extract PROFILEDATA frame durations using dynamic header columns
+    # (Android 12+ inserts FrameTimelineVsyncId, moving IntendedVsync/FrameCompleted)
     durs_ms = []
     in_prof = False
+    idx_intended = 1
+    idx_completed = 13
+    idx_interval = -1
+    panel_hz = 60.0
     for ln in text.splitlines():
         if "---PROFILEDATA---" in ln:
             in_prof = not in_prof
             continue
-        if in_prof and ln.startswith("0,"):
-            cols = ln.split(",")
-            if len(cols) > 13 and cols[1].isdigit() and cols[13].isdigit():
-                dt = (int(cols[13]) - int(cols[1])) / 1e6
+        if not in_prof:
+            continue
+        cols = ln.strip().split(",")
+        if "IntendedVsync" in cols and "FrameCompleted" in cols:
+            idx_intended = cols.index("IntendedVsync")
+            idx_completed = cols.index("FrameCompleted")
+            if "FrameInterval" in cols:
+                idx_interval = cols.index("FrameInterval")
+            continue
+        if cols and cols[0] == "0" and len(cols) > max(idx_intended, idx_completed):
+            s_i, s_c = cols[idx_intended], cols[idx_completed]
+            if s_i.isdigit() and s_c.isdigit():
+                dt = (int(s_c) - int(s_i)) / 1e6
                 if 0.5 < dt < 500.0:
                     durs_ms.append(dt)
+            if idx_interval >= 0 and len(cols) > idx_interval and cols[idx_interval].isdigit():
+                iv = int(cols[idx_interval])
+                if 3_000_000 < iv < 50_000_000:
+                    panel_hz = round(1e9 / iv, 1)
 
     durs_ms.sort()
     p99_ms = durs_ms[min(len(durs_ms) - 1, max(0, int(0.99 * len(durs_ms)) - 1))] if durs_ms else 0.0
     mean_ms = statistics.fmean(durs_ms) if durs_ms else 0.0
-    eff_fps = min(60.0, 1000.0 / mean_ms) if mean_ms > 0 else 0.0
-    low1_fps = min(60.0, 1000.0 / p99_ms) if p99_ms > 0 else 0.0
+
+    # Fallback to dumpsys gfxinfo summary percentiles if PROFILEDATA section is absent
+    if mean_ms <= 0.0:
+        m_p50 = re.search(r"50th percentile:\s*(\d+)ms", text)
+        m_p99 = re.search(r"99th percentile:\s*(\d+)ms", text)
+        if m_p50:
+            mean_ms = float(m_p50.group(1))
+        if m_p99:
+            p99_ms = float(m_p99.group(1))
+
+    eff_fps = min(panel_hz, 1000.0 / mean_ms) if mean_ms > 0 else 0.0
+    low1_fps = min(panel_hz, 1000.0 / p99_ms) if p99_ms > 0 else 0.0
     return {
+        "panel_hz": panel_hz,
         "frames": total_frames or len(durs_ms),
-        "jank_pct": (100.0 * jank_frames / total_frames) if total_frames else 0.0,
+        "jank_pct": round((100.0 * jank_frames / total_frames), 2) if total_frames else 0.0,
         "mean_ms": round(mean_ms, 2),
         "p99_ms": round(p99_ms, 2),
         "effective_fps": round(eff_fps, 2),
@@ -153,24 +189,31 @@ def main() -> int:
 
                 dv_b, dv_a = parse_dvfs(b_txt), parse_dvfs(a_txt)
                 avg_mhz_by_pol = {}
+                high_opp_pct_by_pol = {}
                 for pname, st_a in dv_a.items():
                     st_b = dv_b.get(pname, {})
                     w_freq = 0.0
                     tot_t = 0
+                    max_khz = max(st_a.keys()) if st_a else 0
+                    high_t = 0
                     for khz, ta in st_a.items():
                         dt = max(0, ta - st_b.get(khz, 0))
                         w_freq += (khz / 1000.0) * dt
                         tot_t += dt
+                        if max_khz > 0 and khz >= 0.8 * max_khz:
+                            high_t += dt
                     if tot_t > 0:
                         avg_mhz_by_pol[pname] = round(w_freq / tot_t, 1)
+                        high_opp_pct_by_pol[pname] = round(100.0 * high_t / tot_t, 1)
 
                 gfx = parse_gfxinfo_fps(gfx_txt)
-                peak_c = parse_max_temp_c(th_txt)
+                peak_c = parse_max_temp_c("\n".join([th_txt, b_txt, a_txt]))
                 runs_data.append({
                     "cpu_util_total_pct": round(statistics.fmean(util_all), 1) if util_all else 0.0,
                     "cpu_util_little_pct": round(statistics.fmean(util_little), 1) if util_little else 0.0,
                     "cpu_util_big_pct": round(statistics.fmean(util_big), 1) if util_big else 0.0,
                     "dvfs_avg_mhz": avg_mhz_by_pol,
+                    "dvfs_high_opp_pct": high_opp_pct_by_pol,
                     "peak_temp_c": round(peak_c, 1) if peak_c else None,
                     **gfx,
                 })
