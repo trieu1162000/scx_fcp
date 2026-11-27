@@ -43,12 +43,14 @@ struct options {
 	unsigned stage_us;
 	unsigned stages;
 	unsigned bg_workers;
+	unsigned bg_duration_ms;
 	unsigned little_power_mw;
 	unsigned big_power_mw;
 	bool anonymous_comms;
 	bool bg_only;
 	const char *big_cpus;
 	const char *scheduler;
+	const char *raw_out;
 };
 
 struct pipeline {
@@ -56,6 +58,7 @@ struct pipeline {
 	_Atomic int trigger[MAX_STAGES];
 	_Atomic int frame_done;
 	_Atomic bool stop;
+	_Atomic uint64_t bg_chunks_done;
 	pthread_t stage_threads[MAX_STAGES];
 	pthread_t bg_threads[MAX_BG_WORKERS];
 	uint64_t stage_cpu_ns[MAX_STAGES];
@@ -240,8 +243,10 @@ static void *background_main(void *arg)
 		bg_chunk = 1000ULL;
 	set_thread_name(p->opts.anonymous_comms ? "anon_bg" : "fcp_background");
 
-	while (!atomic_load_explicit(&p->stop, memory_order_relaxed))
+	while (!atomic_load_explicit(&p->stop, memory_order_relaxed)) {
 		do_work_iters(bg_chunk);
+		atomic_fetch_add_explicit(&p->bg_chunks_done, 1ULL, memory_order_relaxed);
+	}
 	return NULL;
 }
 
@@ -298,7 +303,9 @@ static void usage(const char *program)
 		"  --stages N             synchronous stages, 1..4 (default: 4)\n"
 		"  --bg-workers N         background CPU workers, 0..32 (default: 2)\n"
 		"  --big-cpus LIST        comma-separated big CPU IDs (optional)\n"
-		"  --bg-only              run only background workers until SIGINT/SIGTERM\n"
+		"  --bg-only              run only background workers until SIGINT/SIGTERM or --bg-duration-ms\n"
+		"  --bg-duration-ms N     fixed duration in ms for --bg-only throughput test (default: 0 = wait signal)\n"
+		"  --raw-out PATH         write raw per-frame durations JSON to PATH\n"
 		"  --little-power-mw N    energy estimate (default: 450)\n"
 		"  --big-power-mw N       energy estimate (default: 1400)\n"
 		"  --anonymous-comms      use generic thread names (anon_s0..3, anon_bg)\n",
@@ -316,6 +323,8 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		{"bg-workers", required_argument, NULL, 'b'},
 		{"big-cpus", required_argument, NULL, 'c'},
 		{"bg-only", no_argument, NULL, 'o'},
+		{"bg-duration-ms", required_argument, NULL, 'd'},
+		{"raw-out", required_argument, NULL, 'r'},
 		{"little-power-mw", required_argument, NULL, 'l'},
 		{"big-power-mw", required_argument, NULL, 'g'},
 		{"anonymous-comms", no_argument, NULL, 'a'},
@@ -329,12 +338,14 @@ static void parse_options(struct options *opts, int argc, char **argv)
 		.stage_us = 700,
 		.stages = MAX_STAGES,
 		.bg_workers = 2,
+		.bg_duration_ms = 0,
 		.little_power_mw = 450,
 		.big_power_mw = 1400,
 		.anonymous_comms = false,
 		.bg_only = false,
 		.big_cpus = NULL,
 		.scheduler = "unknown",
+		.raw_out = NULL,
 	};
 
 	while ((option = getopt_long(argc, argv, "", long_options, NULL)) != -1) {
@@ -362,6 +373,12 @@ static void parse_options(struct options *opts, int argc, char **argv)
 			break;
 		case 'o':
 			opts->bg_only = true;
+			break;
+		case 'd':
+			opts->bg_duration_ms = (unsigned)strtoul(optarg, NULL, 10);
+			break;
+		case 'r':
+			opts->raw_out = optarg;
 			break;
 		case 'l':
 			opts->little_power_mw = (unsigned)strtoul(optarg, NULL, 10);
@@ -463,14 +480,17 @@ int main(int argc, char **argv)
 	}
 	atomic_init(&p.frame_done, 0);
 	atomic_init(&p.stop, false);
+	atomic_init(&p.bg_chunks_done, 0ULL);
 	for (unsigned i = 0; i < MAX_STAGES; i++)
 		atomic_init(&p.trigger[i], 0);
 
 	if (opts.bg_only) {
+		uint64_t bg_t0, bg_t1;
 		struct sigaction sa = {0};
 		sa.sa_handler = handle_sig;
 		sigaction(SIGINT, &sa, NULL);
 		sigaction(SIGTERM, &sa, NULL);
+		bg_t0 = now_ns(CLOCK_MONOTONIC_RAW);
 		for (unsigned i = 0; i < opts.bg_workers; i++) {
 			int error = pthread_create(&p.bg_threads[i], NULL, background_main, &p);
 			if (error) {
@@ -479,11 +499,28 @@ int main(int argc, char **argv)
 				return EXIT_FAILURE;
 			}
 		}
-		while (!g_sig_stop)
-			pause();
+		if (opts.bg_duration_ms > 0) {
+			struct timespec ts = {
+				.tv_sec = (time_t)(opts.bg_duration_ms / 1000U),
+				.tv_nsec = (long)((opts.bg_duration_ms % 1000U) * 1000000UL),
+			};
+			nanosleep(&ts, NULL);
+		} else {
+			while (!g_sig_stop)
+				pause();
+		}
 		atomic_store_explicit(&p.stop, true, memory_order_release);
 		for (unsigned i = 0; i < opts.bg_workers; i++)
 			pthread_join(p.bg_threads[i], NULL);
+		bg_t1 = now_ns(CLOCK_MONOTONIC_RAW);
+		if (opts.bg_duration_ms > 0) {
+			double elapsed_s = (double)(bg_t1 > bg_t0 ? bg_t1 - bg_t0 : 1ULL) / 1e9;
+			uint64_t chunks = atomic_load_explicit(&p.bg_chunks_done, memory_order_relaxed);
+			printf("{\"scheduler\":\"%s\",\"mode\":\"bg_only\",\"bg_workers\":%u,"
+			       "\"elapsed_s\":%.3f,\"bg_chunks\":%llu,\"bg_chunks_per_s\":%.2f}\n",
+			       opts.scheduler, opts.bg_workers, elapsed_s,
+			       (unsigned long long)chunks, (double)chunks / elapsed_s);
+		}
 		return EXIT_SUCCESS;
 	}
 	durations = calloc(opts.frames, sizeof(*durations));
@@ -589,14 +626,36 @@ int main(int argc, char **argv)
 		p50_ms = (double)percentile(durations, opts.frames, 0.50) / 1000000.0;
 		p95_ms = (double)percentile(durations, opts.frames, 0.95) / 1000000.0;
 		p99_ms = (double)percentile(durations, opts.frames, 0.99) / 1000000.0;
+		double max_ms = (double)durations[opts.frames - 1] / 1000000.0;
+		double eff_fps = mean_ms > 0.0 ? (1000.0 / mean_ms) : 0.0;
+		if (eff_fps > (double)opts.hz)
+			eff_fps = (double)opts.hz;
+		double low1_fps = p99_ms > 0.0 ? (1000.0 / p99_ms) : 0.0;
+		if (low1_fps > (double)opts.hz)
+			low1_fps = (double)opts.hz;
+		uint64_t bg_chunks = atomic_load_explicit(&p.bg_chunks_done, memory_order_relaxed);
 		energy_mj = ((double)little_cpu_ns * opts.little_power_mw +
 			     (double)big_cpu_ns * opts.big_power_mw) / (double)NS_PER_SEC;
+
+		if (opts.raw_out && opts.raw_out[0] != '\0') {
+			FILE *rf = fopen(opts.raw_out, "w");
+			if (rf) {
+				fprintf(rf, "{\"scheduler\":\"%s\",\"frames\":%u,\"hz\":%u,\"durations_ns\":[",
+					opts.scheduler, opts.frames, opts.hz);
+				for (unsigned i = 0; i < opts.frames; i++)
+					fprintf(rf, "%s%llu", i ? "," : "", (unsigned long long)durations[i]);
+				fprintf(rf, "]}\n");
+				fclose(rf);
+			}
+		}
 
 		printf("{\"scheduler\":\"%s\",\"frames\":%u,\"hz\":%u,"
 		       "\"stages\":%u,\"stage_us\":%u,\"bg_workers\":%u,"
 		       "\"iters_per_us\":%llu,"
 		       "\"mean_ms\":%.3f,\"p50_ms\":%.3f,\"p95_ms\":%.3f,"
-		       "\"p99_ms\":%.3f,\"jank60_pct\":%.3f,\"jank90_pct\":%.3f,\"jank120_pct\":%.3f,"
+		       "\"p99_ms\":%.3f,\"max_ms\":%.3f,"
+		       "\"effective_fps\":%.2f,\"low1_fps\":%.2f,\"bg_chunks\":%llu,"
+		       "\"jank60_pct\":%.3f,\"jank90_pct\":%.3f,\"jank120_pct\":%.3f,"
 		       "\"big_residency_pct\":%.2f,"
 		       "\"little_stage_samples\":%llu,\"big_stage_samples\":%llu,"
 		       "\"gold_stage_samples\":%llu,\"prime_stage_samples\":%llu,"
@@ -606,7 +665,8 @@ int main(int argc, char **argv)
 		       opts.scheduler, opts.frames, opts.hz, opts.stages,
 		       opts.stage_us, opts.bg_workers,
 		       (unsigned long long)p.iters_per_us,
-		       mean_ms, p50_ms, p95_ms, p99_ms,
+		       mean_ms, p50_ms, p95_ms, p99_ms, max_ms,
+		       eff_fps, low1_fps, (unsigned long long)bg_chunks,
 		       100.0 * (double)jank60 / opts.frames,
 		       100.0 * (double)jank90 / opts.frames,
 		       100.0 * (double)jank120 / opts.frames,

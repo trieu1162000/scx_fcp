@@ -103,6 +103,7 @@ struct fcp_task_ctx {
 	u8 inherited_token;
 	u8 last_stop_was_block;
 	u8 woke_peer;
+	u8 woke_same_tgid;
 	u8 periodicity_score;
 	u8 missed_periods;
 	u8 first_big_checked;
@@ -179,7 +180,9 @@ static __always_inline struct fcp_task_ctx *create_task_ctx(struct task_struct *
 #define is_bg_worker_comm(c) false
 #else
 /*
- * Legacy named hints. These strings are compiled out of the zero-hint build.
+ * Optional OS display-service hints (--os-hints / named profile only).
+ * Compiled out in default scx_fcp (Ours) and zero-hint builds.
+ * Contains only AOSP system display daemon/thread names, never benchmark/app names.
  */
 static __always_inline bool match_frame_comm(const char *c)
 {
@@ -212,47 +215,12 @@ static __always_inline bool match_frame_comm(const char *c)
 	/* "HwcAsyncWorker" */
 	if (c[0] == 'H' && c[1] == 'w' && c[2] == 'c')
 		return true;
-	/* "fcp_ui" (excluding the "fcp_frame_bench" harness and "fcp_background") */
-	if (c[0] == 'f' && c[1] == 'c' && c[2] == 'p' && c[3] == '_' &&
-	    c[4] == 'u' && c[5] == 'i')
-		return true;
-	/* "ui_main" or "uibench" */
-	if ((c[0] == 'u' || c[0] == 'U') && (c[1] == 'i' || c[1] == 'I') &&
-	    (c[2] == '_' || c[2] == 'B' || c[2] == 'b'))
-		return true;
 	/* "hwuiTask*" */
 	if (c[0] == 'h' && c[1] == 'w' && c[2] == 'u' && c[3] == 'i')
 		return true;
 	/* "composer*" */
 	if (c[0] == 'c' && c[1] == 'o' && c[2] == 'm' && c[3] == 'p' &&
 	    c[4] == 'o' && c[5] == 's')
-		return true;
-	/* "android.ui", "android.anim", "android.display", "android.hardwar" */
-	if (c[0] == 'a' && c[1] == 'n' && c[2] == 'd' && c[3] == 'r' &&
-	    c[4] == 'o' && c[5] == 'i' && c[6] == 'd' && c[7] == '.' &&
-	    (c[8] == 'u' || c[8] == 'a' || c[8] == 'd' || c[8] == 'h'))
-		return true;
-	/* "droid.benchmark" or "id.test.uibench" or "bench.janktests" */
-	if (c[0] == 'd' && c[1] == 'r' && c[2] == 'o' && c[3] == 'i' &&
-	    c[4] == 'd' && c[5] == '.' && c[6] == 'b')
-		return true;
-	if (c[0] == 'i' && c[1] == 'd' && c[2] == '.' && c[3] == 't' &&
-	    c[4] == 'e' && c[5] == 's' && c[6] == 't' && c[7] == '.' &&
-	    c[8] == 'u')
-		return true;
-	if (c[0] == 'b' && c[1] == 'e' && c[2] == 'n' && c[3] == 'c' &&
-	    c[4] == 'h' && c[5] == '.' && c[6] == 'j')
-		return true;
-	/* "FrameStatsColle" */
-	if (c[0] == 'F' && c[1] == 'r' && c[2] == 'a' && c[3] == 'm' &&
-	    c[4] == 'e' && c[5] == 'S')
-		return true;
-	/* "AutomatorThread" */
-	if (c[0] == 'A' && c[1] == 'u' && c[2] == 't' && c[3] == 'o' &&
-	    c[4] == 'm' && c[5] == 'a')
-		return true;
-	/* "jank*" */
-	if (c[0] == 'j' && c[1] == 'a' && c[2] == 'n' && c[3] == 'k')
 		return true;
 
 	return false;
@@ -596,6 +564,8 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 	    now - wctx->last_sleep_at_ns <= 50ULL * NSEC_PER_MSEC) {
 		if (wctx->woke_peer < 255)
 			wctx->woke_peer++;
+		if (same_tgid && wctx->woke_same_tgid < 255)
+			wctx->woke_same_tgid++;
 	}
 
 	if (!sync_wake &&
@@ -616,7 +586,7 @@ static __always_inline void fcp_token_try_inherit(struct task_struct *p,
 
 #ifndef SCX_FCP_NO_FANOUT_CAP
 	/* Cap same-TGID fan-out per burst to 1 sequential stage handoff. */
-	if (!sync_wake && wctx->woke_peer > 1) {
+	if (!sync_wake && wctx->woke_same_tgid > 1) {
 		stat_edges_budget_rejected++;
 		return;
 	}
@@ -713,6 +683,7 @@ static __always_inline void fcp_token_step(struct task_struct *p,
 	fcp_token_try_inherit(p, tctx, wake_flags, now, !was_root);
 	fcp_root_admit(p, tctx, now);
 	tctx->woke_peer = 0;
+	tctx->woke_same_tgid = 0;
 
 	if (fcp_root_read(tctx))
 		fcp_token_root_step(tctx, now);
@@ -1319,7 +1290,7 @@ void BPF_STRUCT_OPS(fcp_exit, struct scx_exit_info *ei)
 #define FCP_OPS_NAME "fcp_nt"
 #elif defined(SCX_FCP_NO_FANOUT_CAP)
 #define FCP_OPS_NAME "fcp_nf"
-#elif defined(SCX_FCP_ZERO_HINT)
+#elif defined(SCX_FCP_ZH_OPS)
 #define FCP_OPS_NAME "fcp_zh"
 #elif defined(SCX_FCP_NAMED)
 #define FCP_OPS_NAME "fcp_nh"

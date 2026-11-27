@@ -9,10 +9,18 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SCX_FCP_NO_TOKEN");
     println!("cargo:rerun-if-env-changed=SCX_FCP_NO_FANOUT_CAP");
     match profile.as_str() {
-        "zero-hint" => bpf_cflags.push_str(" -DSCX_FCP_ZERO_HINT"),
+        "zero-hint" => bpf_cflags.push_str(" -DSCX_FCP_ZERO_HINT -DSCX_FCP_ZH_OPS"),
         "named" => bpf_cflags.push_str(" -DSCX_FCP_NAMED"),
         "oracle" => bpf_cflags.push_str(" -DSCX_FCP_ORACLE"),
-        _ => {}
+        _ => {
+            // Default scx_fcp (Ours) is purely behavioral (zero string/PID hints)
+            // unless building a no-token / no-fanout diagnostic variant that tests comm-exclusion.
+            if std::env::var_os("SCX_FCP_NO_TOKEN").is_none()
+                && std::env::var_os("SCX_FCP_NO_FANOUT_CAP").is_none()
+            {
+                bpf_cflags.push_str(" -DSCX_FCP_ZERO_HINT");
+            }
+        }
     }
     if std::env::var_os("SCX_FCP_NO_TOKEN").is_some() {
         bpf_cflags.push_str(" -DSCX_FCP_NO_TOKEN");
