@@ -21,6 +21,7 @@
 #   ./artifact/pipeline.sh guardrails
 # =============================================================================
 set -euo pipefail
+trap 'echo "error: guardrails failed at line $LINENO (exit=$?, cmd=$BASH_COMMAND)" >&2' ERR
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ARTIFACT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
@@ -119,8 +120,8 @@ HAS_HZ_FLAG=0
 if [ "$(rsh "[ -x '$REMOTE_DIR/fcp_frame_bench' ] && echo yes || echo no" | tr -d '\r')" = "yes" ]; then
   HAS_BENCH=1
   BENCH_HELP=$(rsh "'$REMOTE_DIR/fcp_frame_bench' --help 2>&1 || true" | tr -d '\r')
-  echo "$BENCH_HELP" | grep -q -- '--bg-only' && HAS_BG_ONLY=1
-  echo "$BENCH_HELP" | grep -q -- '--hz' && HAS_HZ_FLAG=1
+  if echo "$BENCH_HELP" | grep -q -- '--bg-only'; then HAS_BG_ONLY=1; fi
+  if echo "$BENCH_HELP" | grep -q -- '--hz'; then HAS_HZ_FLAG=1; fi
 fi
 echo "  bench    : present=$HAS_BENCH bg_only=$HAS_BG_ONLY hz_flag=$HAS_HZ_FLAG"
 
@@ -235,9 +236,12 @@ capture_snapshot() {
       cur=\$(cat \$ps/current_now 2>/dev/null || echo '')
       vol=\$(cat \$ps/voltage_now 2>/dev/null || echo '')
       pwr=\$(cat \$ps/power_now 2>/dev/null || echo '')
-      [ -n \"\$cur\$vol\$pwr\" ] && echo \"\$(basename \$ps) current=\$cur voltage=\$vol power=\$pwr\"
+      if [ -n \"\$cur\$vol\$pwr\" ]; then
+        echo \"\$(basename \$ps) current=\$cur voltage=\$vol power=\$pwr\"
+      fi
     done
-  " > "$dst"
+    true
+  " > "$dst" || true
 }
 
 read -r -a POL_LIST <<< "$POLICIES_STR"
@@ -276,7 +280,14 @@ stop_bg_contention() {
 echo ""
 echo "[1/3] Running Combined Real-UI Scroll + CPU Util + DVFS + Thermal + FPS..."
 UI_PKG="com.android.settings"
-UI_ACT="com.android.settings/.Settings"
+if rsh "pm path com.android.car.settings >/dev/null 2>&1"; then
+  UI_PKG="com.android.car.settings"
+fi
+UI_ACT=$(rsh "cmd package resolve-activity --brief '$UI_PKG' 2>/dev/null | tail -n 1" | tr -d '\r')
+if [ -z "$UI_ACT" ] || [ "$UI_ACT" = "No activity found" ]; then
+  UI_ACT="${UI_PKG}/${UI_PKG}.Settings"
+fi
+echo "  UI target: $UI_PKG ($UI_ACT)"
 
 for run in $(seq 1 "$RUNS"); do
   for pol in "${POL_LIST[@]}"; do
@@ -357,7 +368,7 @@ if [ "$HAS_BENCH" = "1" ]; then
   echo "[3/3] Running Mini 90Hz Load Sweep (600 frames/point, -f 11111us)..."
   mkdir -p "$OUT_DIR/load_sweep"
   HZ_FLAG=""
-  [ "$HAS_HZ_FLAG" = "1" ] && HZ_FLAG="--hz 90"
+  if [ "$HAS_HZ_FLAG" = "1" ]; then HZ_FLAG="--hz 90"; fi
   W1=$(( NCPU / 4 )); W2=$(( NCPU / 2 )); W3=$(( (3 * NCPU) / 4 )); W4=$NCPU
   for bg in 0 "$W1" "$W2" "$W3" "$W4"; do
     for pol in "${POL_LIST[@]}"; do
