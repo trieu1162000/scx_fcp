@@ -49,9 +49,13 @@ struct Opts {
     #[clap(short = 'b', long, default_value = "6000")]
     slice_bg_us: u64,
 
-    /// Comma-separated list of big/Prime CPU IDs (if omitted, reads cpu_capacity or defaults to top half of CPUs).
+    /// Comma-separated list of big/Prime CPU IDs (if omitted, reads cpu_capacity sysfs).
     #[clap(long, default_value = "")]
     big_cpus: String,
+
+    /// Force 50/50 LITTLE/big split even when sysfs cpu_capacity is uniform (synthetic VM stress mode).
+    #[clap(long, default_value_t = false)]
+    force_split: bool,
 
     /// Comma-separated list of thread IDs to register as explicit frame roots. Disabled in the zero-hint build.
     #[clap(long, default_value = "")]
@@ -65,7 +69,7 @@ struct Opts {
     pub libbpf: LibbpfOpts,
 }
 
-fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u8>) {
+fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str, force_split: bool) -> (Vec<u64>, Vec<u8>) {
     let mut caps = vec![1024u64; nr_cpus];
     let mut is_big = vec![0u8; nr_cpus];
 
@@ -107,8 +111,7 @@ fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u
         for cpu in 0..nr_cpus {
             is_big[cpu] = if caps[cpu] >= threshold { 1 } else { 0 };
         }
-    } else {
-        // Default big.LITTLE partition on symmetric VMs (e.g. 4-vCPU Cuttlefish: CPUs 0..N/2 LITTLE, N/2..N big)
+    } else if force_split {
         let split = (nr_cpus / 2).max(1);
         for cpu in 0..nr_cpus {
             if cpu >= split {
@@ -118,6 +121,12 @@ fn detect_cpu_capacities(nr_cpus: usize, big_cpus_arg: &str) -> (Vec<u64>, Vec<u
                 caps[cpu] = 446;
                 is_big[cpu] = 0;
             }
+        }
+    } else {
+        // Uniform sysfs capacity (e.g. symmetric SMP/VM): treat all CPUs as full capacity (no artificial partition).
+        for cpu in 0..nr_cpus {
+            caps[cpu] = 1024;
+            is_big[cpu] = 1;
         }
     }
 
@@ -146,7 +155,7 @@ fn main() -> Result<()> {
         .unwrap_or(8)
         .min(fcp_consts_MAX_CPUS as usize);
 
-    let (caps, is_big) = detect_cpu_capacities(nr_cpus, &opts.big_cpus);
+    let (caps, is_big) = detect_cpu_capacities(nr_cpus, &opts.big_cpus, opts.force_split);
 
     let mut open_object = MaybeUninit::<OpenObject>::uninit();
     let skel_builder = BpfSkelBuilder::default();
